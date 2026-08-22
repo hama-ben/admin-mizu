@@ -15,6 +15,39 @@
 -- All other tables are created in FK-safe order.
 -- =============================================================
 
+-- 1g. Platform interface availability.
+-- disabled_since is managed by the trigger below. It is deliberately
+-- preserved when an interface is re-enabled so a later compensation
+-- process can consume the outage duration before clearing it.
+CREATE TABLE IF NOT EXISTS public.platform_status (
+  role           TEXT        PRIMARY KEY CHECK (role IN ('consumer', 'driver')),
+  enabled        BOOLEAN     NOT NULL DEFAULT TRUE,
+  message        TEXT,
+  disabled_since TIMESTAMPTZ
+);
+
+INSERT INTO public.platform_status (role, enabled)
+VALUES ('consumer', TRUE), ('driver', TRUE)
+ON CONFLICT (role) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.set_platform_disabled_since()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.enabled = TRUE AND NEW.enabled = FALSE THEN
+    NEW.disabled_since := NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS platform_status_disabled_since ON public.platform_status;
+CREATE TRIGGER platform_status_disabled_since
+  BEFORE UPDATE OF enabled ON public.platform_status
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_platform_disabled_since();
+
 -- 1a. Users — already exists, this is a no-op.
 -- Shown here for reference only; IF NOT EXISTS prevents re-creation.
 CREATE TABLE IF NOT EXISTS public.users (
@@ -106,6 +139,7 @@ ALTER TABLE public.orders           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payments         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.announcements    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ratings_disputes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.platform_status   ENABLE ROW LEVEL SECURITY;
 
 -- users
 CREATE POLICY "admin_anon_all_users"
@@ -135,6 +169,10 @@ CREATE POLICY "admin_anon_all_announcements"
 -- ratings_disputes
 CREATE POLICY "admin_anon_all_disputes"
   ON public.ratings_disputes FOR ALL TO anon
+  USING (true) WITH CHECK (true);
+
+CREATE POLICY "admin_anon_all_platform_status"
+  ON public.platform_status FOR ALL TO anon
   USING (true) WITH CHECK (true);
 
 

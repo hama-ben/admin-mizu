@@ -128,6 +128,15 @@ export interface SupportMessage {
   admin_id?: string | null;
 }
 
+export type PlatformRole = "consumer" | "driver";
+
+export interface PlatformStatus {
+  role: PlatformRole;
+  enabled: boolean;
+  message: string | null;
+  disabled_since: string | null;
+}
+
 export type PaymentStatus = "pending" | "approved" | "rejected";
 export type DisputeStatus = "pending" | "resolved" | "dismissed";
 

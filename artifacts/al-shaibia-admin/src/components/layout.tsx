@@ -13,6 +13,7 @@ import {
   CalendarX,
   MessageSquare,
   ScrollText,
+  Power,
   ChevronRight,
   ChevronLeft,
   X,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { href: "/disputes",        label: "النزاعات",             icon: AlertTriangle   },
   { href: "/support",         label: "خدمة العملاء",         icon: MessageSquare   },
   { href: "/audit-log",       label: "سجل الإجراءات",        icon: ScrollText      },
+  { href: "/platform-status", label: "حالة التطبيق",          icon: Power           },
 ] as const;
 
 function SidebarContent({ collapsed }: { collapsed: boolean }) {
