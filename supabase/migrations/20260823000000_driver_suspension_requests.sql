@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS public.driver_suspension_requests (
   status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   reviewed_at  TIMESTAMPTZ,
-  reviewed_by  TEXT REFERENCES public.admin_users(user_id) ON DELETE SET NULL,
+  reviewed_by  UUID REFERENCES public.admin_users(user_id) ON DELETE SET NULL,
   CONSTRAINT driver_suspension_reason_text_check CHECK (
     (reason = 'other' AND reason_text IS NOT NULL)
     OR (reason <> 'other' AND reason_text IS NULL)
