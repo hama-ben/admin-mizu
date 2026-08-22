@@ -30,6 +30,29 @@ CREATE TRIGGER platform_status_disabled_since
 
 ALTER TABLE public.platform_status ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "admin_anon_all_platform_status" ON public.platform_status;
-CREATE POLICY "admin_anon_all_platform_status"
-  ON public.platform_status FOR ALL TO anon
-  USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "platform_status_public_read" ON public.platform_status;
+DROP POLICY IF EXISTS "platform_status_admin_write" ON public.platform_status;
+
+-- Both the public apps and the authenticated admin panel must be able to read
+-- the current status. Only an authenticated Supabase user listed in the same
+-- admin_users allowlist used by the admin panel may write.
+CREATE POLICY "platform_status_public_read"
+  ON public.platform_status FOR SELECT TO anon, authenticated
+  USING (true);
+
+CREATE POLICY "platform_status_admin_write"
+  ON public.platform_status FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.admin_users
+      WHERE public.admin_users.user_id = (SELECT auth.uid())
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.admin_users
+      WHERE public.admin_users.user_id = (SELECT auth.uid())
+    )
+  );

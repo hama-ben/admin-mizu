@@ -141,6 +141,10 @@ ALTER TABLE public.announcements    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ratings_disputes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.platform_status   ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "admin_anon_all_platform_status" ON public.platform_status;
+DROP POLICY IF EXISTS "platform_status_public_read" ON public.platform_status;
+DROP POLICY IF EXISTS "platform_status_admin_write" ON public.platform_status;
+
 -- users
 CREATE POLICY "admin_anon_all_users"
   ON public.users FOR ALL TO anon
@@ -171,9 +175,26 @@ CREATE POLICY "admin_anon_all_disputes"
   ON public.ratings_disputes FOR ALL TO anon
   USING (true) WITH CHECK (true);
 
-CREATE POLICY "admin_anon_all_platform_status"
-  ON public.platform_status FOR ALL TO anon
-  USING (true) WITH CHECK (true);
+CREATE POLICY "platform_status_public_read"
+  ON public.platform_status FOR SELECT TO anon, authenticated
+  USING (true);
+
+CREATE POLICY "platform_status_admin_write"
+  ON public.platform_status FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.admin_users
+      WHERE public.admin_users.user_id = (SELECT auth.uid())
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.admin_users
+      WHERE public.admin_users.user_id = (SELECT auth.uid())
+    )
+  );
 
 
 -- =============================================================
