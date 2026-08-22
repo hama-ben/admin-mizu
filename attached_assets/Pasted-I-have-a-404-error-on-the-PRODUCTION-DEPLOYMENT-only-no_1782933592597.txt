@@ -1,0 +1,26 @@
+I have a 404 error on the PRODUCTION DEPLOYMENT only (not the dev/preview environment). This is a React SPA (React Router) — al-shaibia-admin.
+
+Symptom: Refreshing the browser on any sub-route of the deployed app (e.g., https://admin--admin-05.replit.app/expired-accounts, /payments) returns "This page can't be found — HTTP ERROR 404". Navigating to these routes by clicking links inside the app works fine; only a hard refresh or direct URL visit on the deployed domain fails.
+
+Note: The dev/preview environment SPA routing was already fixed separately using a spaFallback() Vite plugin in vite.config.ts, which rewrites unknown non-API, non-asset routes to index.html. That fix does NOT apply to the production deployment, which is a separate build/serve pipeline.
+
+Please do the following, in order:
+
+STEP 1 — DIAGNOSE FIRST, don't change anything yet:
+- Tell me what deployment type this app is using (Static Deployment, Autoscale, Reserved VM, or other).
+- If it's a Static Deployment: check whether there's a rewrite/fallback rule configured for unmatched routes (Replit static deployments support a "rewrites" or similar config to serve index.html for unknown paths with a 200 status).
+- If it's served by an Express/Node server in production (Autoscale/Reserved VM): check whether the production server has a catch-all route that serves index.html for non-API, non-static-asset GET requests, placed AFTER all API routes and static file serving middleware. Check if this catch-all exists in dev but is missing from the production server entry file, or if production uses a different server file/build output than dev.
+- Report back exactly what you find before making changes.
+
+STEP 2 — ONLY AFTER STEP 1 diagnosis, apply the minimal fix:
+- If Static Deployment: add the correct rewrite configuration so all unmatched routes serve index.html.
+- If server-based: add the missing catch-all route mirroring the dev spaFallback() logic (excluding /api/* routes and files with static extensions).
+
+CONSTRAINTS:
+- Do NOT touch Orders, Maps, Drivers, routing logic for the app's business features, or the support chat / Supabase Realtime changes made recently.
+- Do NOT modify the dev-only vite.config.ts spaFallback() logic — this is about the PRODUCTION deployment specifically.
+- Do NOT touch the SUPABASE_SERVICE_ROLE_KEY issue.
+
+STEP 3 — After fixing:
+- Republish/redeploy the app so the fix is live on the production URL.
+- Confirm: what deployment type it was, what exact file/config was changed, and that you tested a hard refresh on a sub-route works after redeploying.

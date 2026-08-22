@@ -1,0 +1,12 @@
+There's a real gap in the Support Chat feature: conversations are only built by grouping existing rows in support_messages by user_id — so if a user has never sent a message, no conversation thread exists for them at all, and clicking "Message via Support" from a user's context menu on the Users page has nothing to open. The admin needs to be able to proactively start a conversation with any user, not just reply to ones who already messaged first.
+Please fix this:
+1. Support Chat page (pages/support-chat.tsx)
+Add a "New Conversation" affordance (e.g. a "+" button at the top of the conversation list) that opens a small search/select dialog to pick any user from users (by name/phone, same search pattern already used on the Users page). Selecting a user should:
+
+If a conversation with that user already exists (has messages) → just select/open it in the existing list.
+If not → open an empty conversation view for that user (no messages yet, just an empty thread with their name/info at the top and the reply box ready), without requiring a placeholder row in support_messages. The conversation only actually gets created in the database once the admin sends the first real message (a normal INSERT into support_messages with sender_type: "admin"), at which point it will naturally appear in the grouped conversation list on next refresh like any other conversation.
+
+2. Users page → "Message via Support" action
+Update this context-menu action so it navigates to the Support Chat page with the target user's ID (e.g. via a route query param like /support-chat?userId=<id>), and have the Support Chat page read that param on mount: if that user already has a conversation, select it; if not, open the same empty-conversation view described above pre-filled with that user, so the admin can start typing immediately — this is the actual fix for the bug reported ("clicking it goes to Support Chat but doesn't find the account").
+3. Consumer/driver (Mizu) side — confirm this already works
+Double check that when an admin sends the first message to a user with no prior conversation, that user actually receives it and sees it appear in their own support chat UI in the Mizu app (via the existing Realtime subscription on support_messages filtered to their user_id) — since this is the first time a row will exist for them, confirm there's no assumption anywhere in the Mizu frontend that a conversation/thread must already exist before it can receive an admin-initiated message.

@@ -1,0 +1,63 @@
+Add admin-side handling for driver appeals submitted on rejected 
+accounts. This connects to the `driver_appeals` table that the 
+driver app now writes to.
+
+═══════════════════════════════════════════════════════════════
+## PART 2 — Show appeal info in Rejected Drivers page
+═══════════════════════════════════════════════════════════════
+
+In the "السائقون المرفوضون" (Rejected Drivers) page, for each 
+rejected driver card, check if they have a row in `driver_appeals`:
+
+  SELECT * FROM driver_appeals WHERE driver_id = '[driver id]' 
+  ORDER BY created_at DESC;
+
+If an appeal exists:
+- Show a badge on the card: "📩 طعن مُقدّم" (Appeal submitted)
+- Add an expandable section showing:
+  * The driver's appeal message
+  * Date submitted
+  * Original rejection reason (if stored anywhere)
+  * Current appeal status (pending/reviewed)
+
+If no appeal was submitted, show the card as before (no extra UI).
+
+═══════════════════════════════════════════════════════════════
+## PART 3 — Admin can respond and reactivate
+═══════════════════════════════════════════════════════════════
+
+On each rejected driver card that has an appeal, add:
+
+- A textarea for admin to write a response/note: "ملاحظة الإدارة..."
+
+- The EXISTING "قبول الآن" button now also, when an appeal exists:
+  * Saves the admin's response to `driver_appeals.admin_response`
+  * Sets `driver_appeals.status = 'reviewed'`, `reviewed_at = NOW()`
+  * Proceeds with the existing approval logic (the 30+2 day gift 
+    if first-time approval, simple status change if not — this 
+    logic should already exist from earlier work, just confirm 
+    it's triggered correctly here too)
+  * Sends a targeted announcement to the driver:
+    Title: "تمت مراجعة طعنك ✅"
+    Content: "تمت الموافقة على طعنك، تم تفعيل حسابك"
+
+- Add a NEW separate button on cards with a pending appeal:
+  "حفظ الملاحظة فقط" — saves admin_response and sets 
+  driver_appeals.status='reviewed' WITHOUT approving the driver. 
+  The driver stays rejected, but the appeal conversation is now 
+  marked as reviewed with the admin's note saved for reference.
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ Rejected driver with a submitted appeal shows the badge and 
+   expandable appeal details on their card
+✅ Admin can type a response and click "قبول الآن" → driver is 
+   approved, appeal marked reviewed, correct subscription gift 
+   applied, driver notified
+✅ Admin can click "حفظ الملاحظة فقط" → response saved, appeal 
+   marked reviewed, driver remains rejected, no notification 
+   sent (or a neutral "تمت مراجعة طعنك" notification — your call, 
+   default to no notification on this action)
+✅ Rejected drivers without any appeal show the card exactly as 
+   it was before this change

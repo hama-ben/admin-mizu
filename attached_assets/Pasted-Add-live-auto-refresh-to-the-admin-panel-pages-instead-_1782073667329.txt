@@ -1,0 +1,65 @@
+Add live auto-refresh to the admin panel pages instead of requiring 
+manual page reloads.
+
+═══════════════════════════════════════════════════════════════
+## Requirement
+═══════════════════════════════════════════════════════════════
+
+These pages should automatically refresh their data every 3 seconds 
+WITHOUT a full page reload (no flicker, no loss of scroll position, 
+no input field resets if any are open):
+
+- Driver Queue
+- Rejected Drivers (once built)
+- Payments
+- Dashboard (stat cards + chart)
+- Orders
+- Users
+
+═══════════════════════════════════════════════════════════════
+## Implementation approach
+═══════════════════════════════════════════════════════════════
+
+Use a polling interval (setInterval every 3000ms) that re-fetches 
+data from Supabase and updates only the component state — not a 
+window.location.reload() or full page navigation.
+
+If using React Query / TanStack Query already in the project:
+  Add `refetchInterval: 3000` to the relevant useQuery hooks for 
+  each page's data fetching.
+
+If using plain useEffect + fetch:
+  Add a setInterval that calls the existing fetch function every 
+  3 seconds, and clear the interval on component unmount 
+  (useEffect cleanup) to avoid memory leaks/duplicate intervals.
+
+═══════════════════════════════════════════════════════════════
+## Important constraints
+═══════════════════════════════════════════════════════════════
+
+- Do NOT show a loading spinner on every 3-second refresh — only 
+  show loading state on the VERY FIRST load of the page. Subsequent 
+  refreshes should update data silently in the background.
+- Preserve any open modals, expanded cards, or filter selections 
+  during refresh — do not reset UI state, only update the 
+  underlying data
+- If a refresh fails (network error), fail silently and retry on 
+  the next 3-second cycle — do not show error toasts for transient 
+  refresh failures (only show errors on the initial page load failure)
+- Pause the auto-refresh interval when the browser tab is not 
+  visible (use the Page Visibility API: document.hidden) to avoid 
+  unnecessary requests when the admin isn't actively looking at 
+  the page — resume when the tab becomes visible again
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ Approve a driver in another browser tab/window → within 3 
+   seconds, Driver Queue updates automatically without manual refresh
+✅ No loading spinner flickers every 3 seconds
+✅ Opening a modal (e.g. viewing a document image) stays open 
+   during a background refresh
+✅ Switching to another browser tab pauses the refresh; switching 
+   back resumes it
+✅ No memory leaks or duplicate intervals when navigating between 
+   admin pages

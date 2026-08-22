@@ -1,0 +1,51 @@
+═══════════════════════════════════════════════════════════════
+CONFIRMED WITH DIRECT DATABASE EVIDENCE
+═══════════════════════════════════════════════════════════════
+Direct Supabase SQL query on driver e7f29f58-a029-46e3-a831-adc7a76304da:
+  BEFORE reject: subscription_expires_at = 2026-09-04 10:51:41.685
+  AFTER reject:  subscription_expires_at = 2026-07-06 10:56:49.85
+
+The value dropped by ~60 days, landing very close to "today + 3 days"
+(today being 2026-07-03). This is NOT a display bug — the database
+value itself changed. Since we already confirmed
+POST /api/data/payments/:id/reject does not touch subscription_
+expires_at in its own code, something ELSE is writing to it during
+or immediately after the reject flow.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — FIND THE ACTUAL WRITE SOURCE, NO ASSUMPTIONS
+═══════════════════════════════════════════════════════════════
+1. Does POST /api/data/payments/:id/reject (or anything it calls)
+   insert a row into the "announcements" table, emit a socket event,
+   or trigger a webhook/notification when a payment is rejected?
+   Show me the complete current code of this endpoint, in full.
+
+2. If it does emit a notification/announcement/socket event on
+   reject — trace what listens for that event on the DRIVER side
+   (the Mizu/nano-main project). Specifically check:
+   nano-main/artifacts/talabati/src/hooks/use-subscription-notifications.ts
+   and any other file reacting to a "payment_rejected" or similar
+   event — does any of that client-side code call an endpoint that
+   writes subscription_expires_at (e.g. accidentally re-triggering
+   the 3-day upload-bonus grace period logic, or calling
+   PATCH /driver/:driverId/account with a stale value)?
+
+3. Check the "3-day grace period" bonus logic in
+   nano-main/artifacts/api-server/src/routes/driver.ts (the receipt
+   upload endpoint). Could a REJECT somehow cause the driver app's
+   frontend to re-trigger a receipt re-upload or a call to that
+   endpoint automatically (e.g., the pending-payment form
+   reappearing and auto-submitting, or a stale form still holding
+   old data that gets resubmitted)?
+
+4. Search BOTH projects (al-shaibia-admin backend AND nano/Mizu
+   backend) for every write to subscription_expires_at one more
+   time, specifically looking for anything that could fire as a
+   side effect of a payment status changing to "rejected" (e.g., a
+   Postgres LISTEN/NOTIFY handler, a webhook subscribed to database
+   changes, a Supabase Realtime subscription reacting to the
+   subscription_payments table update).
+
+Report back the exact mechanism before applying any fix. This is
+a real money/fairness bug affecting real drivers and needs a precise
+diagnosis, not a guess.

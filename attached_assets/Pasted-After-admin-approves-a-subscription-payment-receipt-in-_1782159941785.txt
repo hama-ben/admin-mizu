@@ -1,0 +1,76 @@
+After admin approves a subscription payment receipt in the 
+Payments page, the driver is NOT receiving the 30 days added to 
+their subscription_expires_at. The status changes to approved 
+but the subscription extension does not happen.
+
+Please debug step by step, do not jump to fixing blindly:
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Show me the EXACT current payment approve handler
+═══════════════════════════════════════════════════════════════
+
+Show me the full code of the endpoint that runs when admin clicks 
+"تأكيد" on a payment receipt (likely POST /admin/payments/:id/approve).
+
+I need to see:
+1. Does it update subscription_payments.status = 'approved'?
+2. Does it ALSO update users.subscription_expires_at? 
+3. What is the EXACT calculation used (should be MAX(NOW(), 
+   current_expiry) + 30 days)?
+4. Is the UPDATE on the users table actually executing, or 
+   silently failing?
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Test directly against the database
+═══════════════════════════════════════════════════════════════
+
+Pick a specific driver whose payment you just approved (give me 
+their id/email). Run this directly against Supabase:
+
+  SELECT sp.id, sp.driver_id, sp.status, sp.reviewed_at,
+         u.subscription_expires_at
+  FROM subscription_payments sp
+  JOIN users u ON u.id = sp.driver_id
+  WHERE sp.driver_id = '[that driver id]'
+  ORDER BY sp.created_at DESC LIMIT 1;
+
+Show me the actual current values:
+- If subscription_payments.status = 'approved' but 
+  users.subscription_expires_at is unchanged/old → the users 
+  table UPDATE is failing or missing entirely from the handler
+- If both look wrong → broader issue with the handler
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Add explicit logging and re-test
+═══════════════════════════════════════════════════════════════
+
+Add console.log right before and after the subscription_expires_at 
+UPDATE in the approve handler:
+
+  console.log('Approving payment for driver:', driverId,
+              'current expiry:', currentExpiry,
+              'new expiry:', newExpiry)
+
+  const { data, error } = await db.update(usersTable)
+    .set({ subscription_expires_at: newExpiry })
+    .where(eq(usersTable.id, driverId))
+
+  console.log('Update result:', data, 'Error:', error)
+
+Approve a NEW test payment and show me the actual console output.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Fix based on findings
+═══════════════════════════════════════════════════════════════
+
+Based on Steps 2-3, fix the actual root cause — likely one of:
+- The users table update is missing entirely from this handler 
+  (only subscription_payments was being updated)
+- A typo in the column name or table reference
+- Wrong date math (e.g. using NOW() instead of MAX(NOW(), 
+  current_expiry))
+
+═══════════════════════════════════════════════════════════════
+## Do not report fixed without showing real before/after database 
+## values for an actual test driver
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,18 @@
+Based on direct investigation of the Mizu app's code, here's the precise, safe RLS policy plan. Apply these exactly — do not generalize to a single blanket rule:
+Group A — lock these to deny anon entirely (only service_role/direct Postgres from the backend touches them, frontend never does):
+users, driver_details, subscription_payments, driver_status, ratings, driver_appeals, user_devices, push_subscriptions, announcement_reads, saved_locations, support_conversation_notes
+sqlCREATE POLICY "deny_anon" ON public.<table> FOR ALL TO anon USING (false) WITH CHECK (false);
+Group B — anon needs SELECT only (Realtime subscriptions depend on it), block all writes for anon:
+orders, announcements, support_messages
+sqlCREATE POLICY "anon_select_only" ON public.<table> FOR SELECT TO anon USING (true);
+-- do NOT add an anon INSERT/UPDATE/DELETE policy for these three
+Group C — anon needs write access, narrowly scoped to this one operation (the only direct frontend write in the whole app):
+driver_locations
+sqlCREATE POLICY "anon_upsert_own_location" ON public.driver_locations FOR ALL TO anon USING (true) WITH CHECK (true);
+(This one can't be identity-scoped yet since the anon client has no real auth.uid() — flagged as a known residual gap, see below.)
+Residual risks to flag back to me, not to silently "fix" yourself:
+
+orders SELECT is fully open with no row filter (anyone with the anon key can read every order — customer names, locations, prices — via Realtime). This matches current app behavior but is a real business-data exposure; proper fix requires the Mizu frontend to actually call supabase.realtime.setAuth(jwt)/setSession() with its real Supabase Auth JWT so policies can filter by identity — that's a Mizu-side code change, not something to solve from the admin project.
+Same residual risk applies to support_messages and driver_locations for the same underlying reason (anon-only client architecture).
+
+Do not attempt to "fix" points 1–2 yourself in this project — just apply Groups A/B/C above now, and report back once done so I can confirm nothing broke on the Mizu side.

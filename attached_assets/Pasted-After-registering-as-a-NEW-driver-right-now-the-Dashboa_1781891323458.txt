@@ -1,0 +1,103 @@
+After registering as a NEW driver right now, the Dashboard still 
+shows all zeros and Driver Queue shows "Queue is empty" — even 
+though the registration just happened and should be pending review.
+
+This is a connection/query issue, not a UI issue. Please debug 
+this exact scenario step by step:
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Confirm the registration actually wrote to the database
+═══════════════════════════════════════════════════════════════
+
+Run this directly in Supabase SQL Editor right now:
+
+  SELECT id, name, phone, user_type, account_status, created_at 
+  FROM users 
+  ORDER BY created_at DESC 
+  LIMIT 5;
+
+Show me the result. If the new driver I just registered does NOT 
+appear here, the problem is on the USER-FACING APP side (it's not 
+writing to this database at all) — stop and tell me that immediately, 
+do not continue to step 2.
+
+If the new driver DOES appear here with account_status = 'pending', 
+continue to step 2.
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Confirm driver_details exists for that driver
+═══════════════════════════════════════════════════════════════
+
+  SELECT * FROM driver_details 
+  WHERE driver_id = '[the new driver id from step 1]';
+
+Show me the result — does it have truck_front_photo_url and 
+driver_license_url populated?
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Check what query the Admin Dashboard is actually running
+═══════════════════════════════════════════════════════════════
+
+Show me the EXACT current code for:
+- The dashboard stats queries (all 7 cards)
+- The Driver Queue query (should filter user_type='سائق' AND 
+  account_status='pending')
+
+Add console.log right before and after each Supabase call:
+  console.log('Querying users table...')
+  const { data, error } = await supabase.from('users').select('*')...
+  console.log('Result:', data, 'Error:', error)
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Check which Supabase project this admin panel connects to
+═══════════════════════════════════════════════════════════════
+
+Print (masked) the SUPABASE_URL being used by this admin panel:
+  console.log('Connected to:', process.env.SUPABASE_URL)
+
+Compare this to the SUPABASE_URL used by the user-facing driver 
+app (Mizu project). They MUST be the exact same Supabase project URL.
+If they are different projects, that is the entire bug — the admin 
+panel is reading from a different database than where drivers register.
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Fix based on findings
+═══════════════════════════════════════════════════════════════
+
+Case A — Different Supabase projects:
+  Update the admin panel's SUPABASE_URL and SUPABASE_ANON_KEY 
+  (and SERVICE_ROLE_KEY) secrets to match the EXACT same project 
+  used by the driver/customer app
+
+Case B — Same project but query is wrong:
+  Fix the query based on what step 1-2 actually returned
+
+Case C — RLS blocking the admin's read access:
+  Check policies on users and driver_details tables:
+    SELECT policyname, cmd, qual FROM pg_policies 
+    WHERE tablename IN ('users', 'driver_details');
+  Add a policy allowing the admin's role to SELECT all rows if missing
+
+═══════════════════════════════════════════════════════════════
+## STEP 6 — Driver Queue card UI (once data loads correctly)
+═══════════════════════════════════════════════════════════════
+
+Each pending driver card in the Driver Queue must show:
+- Driver name and phone
+- Registration date
+- Both uploaded document images, clearly visible/clickable to enlarge:
+  * صورة الشاحنة من الأمام (truck_front_photo_url)
+  * صورة رخصة القيادة (driver_license_url)
+- Two buttons side by side: "قبول" (green) and "رفض" (red)
+
+On "قبول": set account_status = 'approved', send targeted 
+announcement, remove card from queue
+On "رفض": set account_status = 'rejected', send targeted 
+announcement with Facebook link, remove card from queue
+
+═══════════════════════════════════════════════════════════════
+## Do not report "fixed" without proof
+═══════════════════════════════════════════════════════════════
+
+Show me the actual SQL query results from Step 1 and the actual 
+SUPABASE_URL values from Step 4 BEFORE telling me anything is fixed.

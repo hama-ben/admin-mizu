@@ -1,0 +1,157 @@
+I need to build/fix 5 pages in the admin panel. This connects to 
+the SAME Supabase project used by the main driver/customer app — 
+the database tables and columns described below were just set up 
+on that side. Please verify the exact table/column names in Supabase 
+before writing queries (do not assume — check first).
+
+═══════════════════════════════════════════════════════════════
+## PAGE 1 — Dashboard: Fix stats showing 0
+═══════════════════════════════════════════════════════════════
+
+All dashboard stats currently show 0 (Total Revenue, Active Drivers, 
+Pending Verification, Orders Completed, Total Users, Consumers, 
+Total Drivers) even though real data exists in Supabase.
+
+Fix:
+- Run SELECT queries directly against Supabase to confirm real data 
+  exists in: users, driver_details, orders, payments tables
+- Check if dashboard queries are using correct table/column names
+- Check if dashboard is querying the WRONG database (local Postgres 
+  vs Supabase) — this was a recurring issue before, verify again
+- Fix all 7 stat cards to pull live counts:
+  * Total Revenue → SUM of approved payments
+  * Active Drivers → COUNT drivers with status = 'حاضر' or online
+  * Pending Verification → COUNT drivers with account_status = 'pending'
+  * Orders Completed → COUNT orders with status = 'تم التوصيل'
+  * Total Users → COUNT all users
+  * Consumers → COUNT users where user_type = 'مستهلك'/customer
+  * Total Drivers → COUNT users where user_type = 'سائق'/driver
+- Fix "User Signups (Last 30 Days)" chart to show real signup data 
+  grouped by day from the users table
+
+═══════════════════════════════════════════════════════════════
+## PAGE 2 — Users: No explanation needed, just classify correctly
+═══════════════════════════════════════════════════════════════
+
+"No users found" appears even though users exist in Supabase.
+
+Fix:
+- Query the correct Supabase table (verify exact name)
+- Display: Name, Phone, Role (driver/consumer), Wilaya, Verified 
+  status, Joined Date
+- Make sure "All / Consumers / Drivers" tab filters work correctly 
+  based on the real user_type column
+
+═══════════════════════════════════════════════════════════════
+## PAGE 3 — Orders: Fix relationship error + show full order lifecycle
+═══════════════════════════════════════════════════════════════
+
+Error: "Could not find a relationship between 'orders' and 'users' 
+in the schema cache"
+
+Fix:
+- Check actual foreign key columns in the orders table in Supabase 
+  (likely customer_id and driver_id, not a generic 'user_id')
+- Fix the Supabase query to use explicit foreign key references:
+  .select('*, customer:customer_id(name,phone), driver:driver_id(name,phone)')
+  (adjust column names to match actual schema)
+
+Required columns to display per order:
+- Order ID
+- Customer (owner of the order)
+- Order status — must show one of these exact states:
+  * "ملغاة من طرف المستهلك" (cancelled by customer)
+  * "معلق في انتظار" (pending, no driver yet)
+  * "مكتمل" (completed)
+- If a driver has accepted the order:
+  * Show driver name
+  * Show delivery timing: time elapsed since driver accepted 
+    (calculate from accepted_at timestamp to now, or to delivered_at 
+    if completed)
+- Date — show the actual order creation date from Supabase
+- All filtering (status, wilaya, date range) must work against 
+  real Supabase data
+
+═══════════════════════════════════════════════════════════════
+## PAGE 4 — Driver Queue: Remove header numbers + approval flow
+═══════════════════════════════════════════════════════════════
+
+Remove the "Official CCP Account for Verification" box with the 
+phone numbers (00799999001 / 1234567890) from the top of this page 
+entirely — it does not belong here.
+
+Required behavior:
+- When a new user registers as a driver (account_status = 'pending'), 
+  their profile must appear in this Driver Queue list automatically
+- Each driver card shows: name, phone, uploaded documents 
+  (truck photo + license photo, viewable as images), registration date
+- Two action buttons: "قبول" (Approve) and "رفض" (Reject)
+
+On "قبول" (Approve) click:
+- Update driver's account_status to 'approved' in Supabase
+- This allows the driver to log in normally on their side
+- Insert a targeted announcement (target_user_id = driver's id):
+  Title: "تم قبولك بيننا"
+  Message: "مرحبا بك"
+
+On "رفض" (Reject) click:
+- Update driver's account_status to 'rejected' in Supabase
+- This triggers the blocking modal on the driver's side with the 
+  Facebook contact link (already implemented on the user-facing app)
+- Remove driver card from the pending queue after action
+
+═══════════════════════════════════════════════════════════════
+## PAGE 5 — Payments: Show real receipts + approve/reject with effects
+═══════════════════════════════════════════════════════════════
+
+Currently shows "No revenue data available" and empty pending list 
+even though drivers have uploaded subscription payment receipts.
+
+Fix:
+- Query the correct Supabase table for subscription payment receipts 
+  (verify exact table name, e.g. subscription_payments)
+- Display in "Pending" tab: driver name, receipt image (clickable 
+  to enlarge), upload date
+- Two buttons per receipt: "تأكيد" (Confirm) and "رفض" (Reject)
+
+On "تأكيد" (Confirm) click:
+- Update receipt status to 'approved' in Supabase
+- Add 30 days to that driver's subscription_expires_at 
+  (extend from now or from current expiry, whichever is later)
+- Insert targeted announcement (target_user_id = driver's id):
+  Title: "تم قبول دفع وصلك"
+  Message: "تم إضافة 30 يوم إلى حسابك"
+- Move receipt from "Pending" to "Approved" tab
+- Update Total Approved Revenue stat at the top
+
+On "رفض" (Reject) click:
+- Update receipt status to 'rejected' in Supabase
+- Insert targeted announcement (target_user_id = driver's id) 
+  with a message that includes the Facebook contact link:
+  https://www.facebook.com/profile.php?id=61590856328769
+- Move receipt to "Rejected" tab
+
+Fix "Revenue by Wilaya" chart to show real aggregated data from 
+approved payments grouped by wilaya.
+
+═══════════════════════════════════════════════════════════════
+## IMPORTANT — Targeted announcements
+═══════════════════════════════════════════════════════════════
+
+The announcements table now supports a `target_user_id` column 
+(added on the user-app side) for single-user targeted messages. 
+When inserting from the admin panel for approval/rejection actions, 
+always set target_user_id to the specific driver's id — do NOT 
+broadcast these to all drivers.
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ Dashboard shows real live numbers, not zeros
+✅ Users page lists and filters real users correctly
+✅ Orders page shows real orders with correct status labels 
+   and driver delivery timing
+✅ Driver Queue shows real pending drivers, approve/reject works 
+   and triggers correct notifications on driver side
+✅ Payments page shows real receipts, confirm/reject works and 
+   correctly extends subscription + notifies driver

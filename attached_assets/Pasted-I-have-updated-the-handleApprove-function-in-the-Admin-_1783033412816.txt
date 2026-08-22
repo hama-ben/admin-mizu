@@ -1,0 +1,63 @@
+I have updated the `handleApprove` function in the Admin Panel to fix the subscription date accumulation logic. 
+
+The new logic ensures that if a driver has a valid future expiration date, it adds 32 days to that future date. If their subscription is expired or null, it starts the 32 days from today (midnight UTC). 
+
+Please acknowledge this update and keep it in mind for any future modifications. Here is the exact new code I am using, please update your context with it:
+
+```javascript
+async function handleApprove(payment: EnrichedPayment) {
+  setPendingApprovalPayment(null);
+  setActionLoading(payment.id);
+  try {
+    const { error: paymentError } = await supabase
+      .from("subscription_payments")
+      .update({ status: "approved", reviewed_at: new Date().toISOString() })
+      .eq("id", payment.id);
+    if (paymentError) throw paymentError;
+
+    const { data: liveUser, error: fetchError } = await supabase
+      .from("users")
+      .select("subscription_expires_at")
+      .eq("id", payment.driver_id)
+      .single();
+    if (fetchError) throw fetchError;
+
+    const rawExpiry = liveUser?.subscription_expires_at;
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0); 
+
+    let baseDate = new Date(today);
+    
+    if (rawExpiry) {
+      const expiryDate = new Date(rawExpiry.split("T")[0]);
+      if (expiryDate > today) {
+        baseDate = expiryDate; 
+      }
+    }
+
+    baseDate.setDate(baseDate.getDate() + 32);
+    const formattedDate = baseDate.toISOString().split("T")[0];
+
+    const { data: updateData, error: updateError } = await supabase
+      .from("users")
+      .update({ subscription_expires_at: formattedDate })
+      .eq("id", payment.driver_id)
+      .select("id, subscription_expires_at");
+    if (updateError) throw updateError;
+
+    await supabase.from("announcements").insert({
+      title: "تم قبول دفع وصلك ✅",
+      content: "تم إضافة 32 يوماً إلى حسابك",
+      target_audience: payment.driver_id,
+      badge_text: "Success",
+      is_active: true,
+    });
+
+    toast({ title: "Payment Confirmed ✓" });
+    setPayments((prev) => prev.filter((p) => p.id !== payment.id));
+  } catch (err: any) {
+    toast({ title: "Action failed", description: err.message, variant: "destructive" });
+  } finally {
+    setActionLoading(null);
+  }
+}

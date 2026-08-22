@@ -1,0 +1,61 @@
+═══════════════════════════════════════════════════════════════
+DIAGNOSTIC BUG FOUND + NEW CLUE
+═══════════════════════════════════════════════════════════════
+The "MISMATCH" warning in the new diagnostic log is a FALSE
+POSITIVE — the RETURNING value and post-COMMIT SELECT value printed
+are IDENTICAL strings (2026-08-05T01:04:05.857Z both times). Please
+fix the comparison logic in the diagnostic (it's likely comparing
+Date objects by reference instead of by value, or comparing before
+proper string formatting). This mismatch flag is not evidence of
+anything and should not have printed.
+
+The REAL clue is different: comparing the two approvals 5 min 41 sec
+apart:
+  Approval 1 RETURNING: 2026-08-05T01:04:05.857Z
+  Approval 2 RETURNING: 2026-08-05T01:10:21.572Z
+The difference between these two values is ~6 minutes — almost
+exactly the real-world time gap between the two approval requests.
+This means EACH approval is computing NOW() + 30 days, NOT
+previous_stored_value + 30 days. The write commits fine within its
+own request (RETURNING = post-COMMIT SELECT, proven), but the NEXT
+request's GREATEST(subscription_expires_at, NOW()) is NOT seeing the
+previous request's committed value — it's behaving as if the column
+is always NULL or already-expired.
+
+═══════════════════════════════════════════════════════════════
+REQUIRED INVESTIGATION
+═══════════════════════════════════════════════════════════════
+1. Print the LITERAL raw SQL string (fully rendered, with the actual
+   column reference visible, not the query builder object) for the
+   approve endpoint's UPDATE statement — copy it directly from a
+   query logging/debug mode, not from memory of the source code.
+
+2. Immediately BEFORE running the UPDATE inside this same request,
+   run a plain SELECT subscription_expires_at FROM users WHERE
+   id = $1 and log that value. Compare it against what the previous
+   approval's post-COMMIT SELECT showed. If this pre-UPDATE SELECT
+   shows an OLD/stale value even though the previous request's
+   post-COMMIT SELECT (in the SAME connection pool) showed the
+   correct new value, this points to connection pooling / isolation
+   level behavior (e.g., a stale prepared statement, or each request
+   using a NEW pg client connection with default REPEATABLE READ or
+   similar snapshot isolation that doesn't see very recent commits
+   from a different connection due to connection pooler quirks with
+   Supabase's pgbouncer in transaction mode).
+
+3. Check: does this server create a NEW pg Pool / client connection
+   per request, or reuse a shared pool? If using Supabase's pooler
+   (port 6543, PgBouncer transaction mode), each query might run on
+   a DIFFERENT underlying physical connection, which is normally
+   fine for read-committed isolation — but confirm the isolation
+   level explicitly, and confirm whether PgBouncer's transaction
+   pooling mode has any known caching/staleness behavior being hit
+   here.
+
+4. As a definitive test: change the connection to use the DIRECT
+   (non-pooled) connection string (port 5432, not the 6543 pooler)
+   if not already doing so, and repeat the two-approvals-in-a-row
+   test. If direct connection fixes the stacking, the pooler was
+   the cause.
+
+Report findings before applying any further fix.

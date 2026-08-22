@@ -1,0 +1,51 @@
+═══════════════════════════════════════════════════════════════
+TWO CRITICAL FINDINGS FROM BROWSER NETWORK TAB
+═══════════════════════════════════════════════════════════════
+1. The "Pending" tab currently shows ZERO pending payments — that's
+   why clicking "تأكيد" did nothing earlier; there was nothing to
+   click. Not a bug, just an empty state. Approved count is 51 and
+   growing, confirming approvals ARE working.
+
+2. SERIOUS SEPARATE ISSUE: the browser URL is
+   attachment-manager--rirubibo.replit.app/payments — NOT
+   admin--admin-001.replit.app, which is what we've been debugging
+   all day. Please confirm: is this a different Replit project/
+   deployment entirely, or a renamed/aliased domain for the SAME
+   project? I need to know if all our fixes today actually apply to
+   THIS specific running instance.
+
+3. MOST IMPORTANT: the Network tab shows the payments page firing
+   63+ requests in under 2 minutes, roughly every 100ms, ALL going
+   DIRECTLY to Supabase's REST API (subscription_payments?select=...,
+   users?select=...) — NOT through our backend /api/data/payments
+   endpoints. This means the payments LIST/READ path still bypasses
+   the backend entirely and hits Supabase directly from the browser,
+   in an extremely tight, uncontrolled polling loop (not the 5s/15s
+   interval we configured anywhere).
+
+═══════════════════════════════════════════════════════════════
+REQUIRED INVESTIGATION
+═══════════════════════════════════════════════════════════════
+1. Confirm whether attachment-manager--rirubibo.replit.app is the
+   same codebase/deployment as admin--admin-001.replit.app, or a
+   completely separate Repl. If separate, all of today's fixes may
+   not be live on whichever one the user is actually using day-to-day.
+
+2. Find the exact source of the ~100ms polling loop in payments.tsx
+   or its dependencies (useAutoRefresh hook, or a useEffect with a
+   missing/incorrect dependency array causing infinite re-renders
+   that each trigger a fresh fetchPayments() call). This is a real,
+   separate performance and cost bug — hammering Supabase 10x/second
+   is expensive and could itself cause connection exhaustion,
+   further explaining earlier instability.
+
+3. Confirm whether fetchPayments/fetchSummary (the read paths) were
+   ever migrated to the backend API, or if only the approve/reject
+   WRITES were moved — leaving reads still direct-to-Supabase. If
+   reads are still direct, that's inconsistent with our security
+   goal (client Supabase key still has broad read access) and should
+   be fixed too, though it's lower priority than the polling loop bug.
+
+Report findings before fixing. The polling loop is likely a genuine
+bug independent of everything else we debugged today, and may
+partially explain earlier instability (connection pressure).

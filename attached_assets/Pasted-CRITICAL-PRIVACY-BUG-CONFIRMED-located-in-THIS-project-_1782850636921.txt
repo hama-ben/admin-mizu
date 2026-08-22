@@ -1,0 +1,63 @@
+CRITICAL PRIVACY BUG CONFIRMED — located in THIS project specifically.
+
+We just proved with exact text comparison that targeted 
+announcements (driver approval, payment approval) being saved to 
+Supabase use target_audience = "Drivers" (broadcast to ALL drivers) 
+instead of the specific driver's UUID. This is a live privacy leak 
+— every driver currently sees every other driver's private 
+approval/rejection/payment notifications.
+
+We confirmed via git archaeology that the Mizu project's code is 
+CORRECT (uses driverId). This bug lives specifically in THIS admin 
+panel codebase.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Find every announcement insert in this codebase
+═══════════════════════════════════════════════════════════════
+
+Search and show me ALL matches:
+  grep -rn "target_audience" .
+  grep -rn "insertTargetedAnnouncement\|announcements.*insert\|insert.*announcements" .
+  grep -rn "تم قبولك بيننا\|تم قبول دفع وصلك\|تم رفض" .
+
+Show me every file and exact line where an announcement is 
+inserted into Supabase, especially:
+1. Driver document approval handler
+2. Driver document rejection handler
+3. Payment approval handler
+4. Payment rejection handler
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Fix every instance found
+═══════════════════════════════════════════════════════════════
+
+For EACH of the 4 handlers above, change:
+  target_audience: 'Drivers'    // ❌ broadcasts to everyone
+
+To:
+  target_audience: driverId     // ✅ the specific driver's UUID 
+                                  // (use whatever variable name 
+                                  // holds the driver's id in that 
+                                  // handler's scope)
+
+Show me the exact before/after diff for each of the 4 handlers.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Test with two real driver accounts
+═══════════════════════════════════════════════════════════════
+
+1. Approve a new test driver's documents
+2. Run in Supabase:
+     SELECT id, title, target_audience, created_at 
+     FROM announcements ORDER BY created_at DESC LIMIT 1;
+3. Confirm target_audience is a UUID, not "Drivers"
+4. Log in as a DIFFERENT driver account → confirm they do NOT see 
+   this announcement at all
+5. Repeat for payment approval
+
+Show me real results, not just a code review.
+
+═══════════════════════════════════════════════════════════════
+## Do not report fixed without showing the actual diff and a 
+## real database test result with a fresh timestamp
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,95 @@
+CRITICAL CORRECTION needed before anything else.
+
+I just got confirmation directly from the driver/customer app team 
+that there is NO `drivers` table being used anywhere in their 
+application. They confirmed in writing:
+
+"There is no separate drivers table in this codebase, and this is 
+by design. The system uses a single `users` table for all account 
+types, distinguished by `user_type`."
+
+The exact schema they confirmed:
+
+  users table:
+    id, name, email, phone, password_hash, 
+    user_type ('سائق' for drivers, presumably 'مستهلك' for customers),
+    wilaya, commune, account_status, created_at
+
+  driver_status table:
+    driver_id (foreign key → users.id), current_status
+
+  driver_details table:
+    driver_id (foreign key → users.id), wilaya, commune,
+    truck_front_photo_url, driver_license_url, 
+    truck_side_photo_url, truck_video_url
+
+  orders table:
+    id, user_id (customer's users.id), driver_id (users.id, 
+    nullable until accepted), water_volume, barrel_count, 
+    total_price, latitude, longitude, status, created_at
+    status values: 'معلق' → 'قيد التوصيل' → 'وصل السائق' → 'تم التوصيل'
+
+  subscription_payments table:
+    id, driver_id (users.id), receipt_image, status ('pending'/
+    'approved'/'rejected'), admin_notes, created_at, reviewed_at
+
+So the `drivers` table that exists in Supabase Table Editor is 
+either an old unused/legacy table or a view — the app NEVER writes 
+to it. That's why every query against `drivers` returns zero rows 
+and zero errors — it's simply the wrong, permanently-empty table.
+
+═══════════════════════════════════════════════════════════════
+## REQUIRED FIX — Rewire everything to `users`, not `drivers`
+═══════════════════════════════════════════════════════════════
+
+- Dashboard stats → 
+  Active Drivers / Total Drivers / Pending Verification: 
+    SELECT FROM users WHERE user_type = 'سائق' (filter by 
+    account_status for pending/active)
+  Consumers / Total Users:
+    SELECT FROM users WHERE user_type = 'مستهلك' (or whatever the 
+    exact value is — verify with: SELECT DISTINCT user_type FROM users;)
+  Orders Completed / Revenue:
+    SELECT FROM orders WHERE status = 'تم التوصيل'
+
+- Driver Queue → 
+  SELECT * FROM users WHERE user_type = 'سائق' AND account_status = 'pending'
+  JOIN driver_details ON driver_details.driver_id = users.id
+  JOIN driver_status ON driver_status.driver_id = users.id
+
+- Users page →
+  SELECT * FROM users (all types), with tabs filtering by user_type
+
+- Orders page →
+  SELECT * FROM orders 
+  JOIN users AS customer ON orders.user_id = customer.id
+  JOIN users AS driver ON orders.driver_id = driver.id
+
+- Payments page →
+  SELECT * FROM subscription_payments
+  JOIN users ON subscription_payments.driver_id = users.id
+  (note: column is `receipt_image`, not `receipt_url`)
+
+- Approve/Reject actions →
+  UPDATE users SET account_status = 'approved'/'rejected' 
+  WHERE id = driverId
+  (NOT updating a `drivers` table — there isn't one)
+
+═══════════════════════════════════════════════════════════════
+## Verify before changing code
+═══════════════════════════════════════════════════════════════
+
+Run these first and show me results:
+  SELECT DISTINCT user_type FROM users;
+  SELECT DISTINCT account_status FROM users;
+  SELECT COUNT(*) FROM users WHERE user_type = 'سائق';
+  SELECT * FROM users WHERE user_type = 'سائق' ORDER BY created_at DESC LIMIT 5;
+
+This should show the driver I registered earlier today with real data.
+
+═══════════════════════════════════════════════════════════════
+## Do NOT proceed with the "real-time notification dot" feature
+═══════════════════════════════════════════════════════════════
+
+Fix the table issue first. We'll revisit that feature after the 
+dashboard shows real non-zero data.

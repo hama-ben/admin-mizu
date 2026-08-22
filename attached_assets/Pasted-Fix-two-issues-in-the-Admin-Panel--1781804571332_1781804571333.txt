@@ -1,0 +1,103 @@
+Fix two issues in the Admin Panel:
+
+═══════════════════════════════════════════════════════════════
+## BUG 1 — Announcements: "badge_type" column not found error
+═══════════════════════════════════════════════════════════════
+
+When trying to publish an announcement, this error appears:
+"Could not find the 'badge_type' column of 'announcements' 
+in the schema cache"
+
+### Fix:
+First check the ACTUAL announcements table structure in Supabase:
+  SELECT column_name FROM information_schema.columns 
+  WHERE table_name = 'announcements';
+
+Then do ONE of the following:
+
+Option A — If badge_type column does not exist in Supabase:
+  Add it via migration:
+  ALTER TABLE announcements 
+  ADD COLUMN IF NOT EXISTS badge_type text DEFAULT 'info';
+  
+  Then reload Supabase schema cache:
+  Go to Supabase Dashboard → Settings → API → 
+  click "Reload schema cache"
+
+Option B — If the admin form is sending badge_type but the 
+  database column has a different name:
+  Update the form submission code to use the correct column name
+  that actually exists in the table
+
+Option C — If badge_type is not needed at all:
+  Remove the Badge Type field from the announcement form entirely
+  and do not send it in the insert query
+
+Also check target_audience column — make sure it exists with 
+the correct name in Supabase before inserting.
+
+After fix: Admin should be able to publish announcements 
+with no errors and they should appear in "Past Announcements".
+
+═══════════════════════════════════════════════════════════════
+## FEATURE — Disputes/Complaints page in Admin Panel
+═══════════════════════════════════════════════════════════════
+
+Add a Disputes page to the admin panel where the admin can 
+read customer support messages sent by users.
+
+### Find existing data first:
+Check Supabase for any existing table that stores:
+- Customer support messages
+- Complaints or disputes
+- Contact form submissions
+- Chat messages between users and support
+
+Look for tables named: disputes, complaints, support_messages,
+contact_messages, tickets, or similar.
+Use the existing table — do NOT create a new one.
+
+### Disputes page UI:
+Add "Disputes" to the admin sidebar navigation (it may already 
+exist as a menu item — just wire it up).
+
+The page must show a table/list with:
+- User name (driver or customer who sent the message)
+- User type (سائق / مستهلك)
+- Message content (the complaint or support message)
+- Date sent (formatted in Arabic)
+- Status badge: 
+  * معلق (pending) — yellow
+  * تمت المعالجة (resolved) — green
+  * مغلق (closed) — gray
+
+### Actions per dispute:
+Each row must have:
+- "عرض" button → opens a modal/drawer showing full message details
+- Status dropdown → admin can change status to resolved/closed
+- If the table supports it: a reply field so admin can respond
+
+### Search and filter:
+- Filter by status (all / pending / resolved / closed)
+- Filter by user type (all / drivers / customers)
+- Search by user name or message content
+
+### Real-time:
+- Use Supabase realtime to show new disputes as they arrive
+- Show a badge count of pending disputes on the sidebar menu item
+
+═══════════════════════════════════════════════════════════════
+## TEST AFTER IMPLEMENTING:
+═══════════════════════════════════════════════════════════════
+
+Announcements:
+✅ Admin can publish announcement without any error
+✅ Announcement appears in "Past Announcements" list
+✅ Drivers and customers receive the announcement in real time
+
+Disputes:
+✅ Admin can see all support messages from users
+✅ Admin can filter by status and user type
+✅ Admin can change dispute status
+✅ New disputes appear in real time
+✅ Pending count badge shows on sidebar

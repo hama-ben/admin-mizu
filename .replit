@@ -1,0 +1,81 @@
+modules = ["nodejs-24", "postgresql-16"]
+
+[deployment]
+deploymentTarget = "autoscale"
+# Build the frontend first, then compile the API server.
+# Express serves both /api/* and the built static files in production.
+build = ["sh", "-c", "BASE_PATH=/ pnpm --filter @workspace/al-shaibia-admin run build && pnpm --filter @workspace/api-server run build"]
+# Start Express on port 5000 (the single public-facing port).
+run = ["sh", "-c", "PORT=5000 NODE_ENV=production node artifacts/api-server/dist/index.mjs"]
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/start-dev.sh"
+waitForPort = 5000
+
+[agent]
+stack = "BEST_EFFORT_FALLBACK"
+expertMode = true
+integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 20423
+externalPort = 3000
+
+[[ports]]
+localPort = 23451
+externalPort = 3002
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+VITE_SUPABASE_URL = "https://aeoyteruvcxqimwusrey.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlb3l0ZXJ1dmN4cWltd3VzcmV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjM3ODUsImV4cCI6MjA5NTk5OTc4NX0.vi9Chq9WgzSKEKz50EHJyaKnPtBRi1MvIjdtlePJHH8"
+SUPABASE_DB_URL = "postgresql://postgres.aeoyteruvcxqimwusrey:hama123hama@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlb3l0ZXJ1dmN4cWltd3VzcmV5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDQyMzc4NSwiZXhwIjoyMDk1OTk5Nzg1fQ.HO3XM8toqKFl1H1uyNrNhHPwurluTvLu2V7vo7fQS-8"

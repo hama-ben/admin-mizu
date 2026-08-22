@@ -1,0 +1,79 @@
+After approving a driver's documents in the Driver Queue (clicking 
+"قبول"), the 32-day subscription (30 gift + 2 bonus) is NOT being 
+applied. The driver's account_status changes to 'approved' but 
+subscription_expires_at is not updated correctly.
+
+Please debug step by step, do not jump to fixing blindly:
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Show me the EXACT current approve handler code
+═══════════════════════════════════════════════════════════════
+
+Show me the full code of the endpoint/function that runs when 
+admin clicks "قبول" in Driver Queue (likely something like 
+POST /admin/drivers/:id/approve or similar).
+
+I need to see:
+1. Does it check `first_approval_granted` correctly?
+2. What is the EXACT calculation used for subscription_expires_at?
+3. Is the UPDATE query actually running, or is there a silent 
+   error being swallowed?
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Test directly against the database
+═══════════════════════════════════════════════════════════════
+
+Pick a specific driver you just approved (give me their id/email). 
+Run this directly against Supabase:
+
+  SELECT id, name, account_status, subscription_expires_at, 
+         first_approval_granted 
+  FROM users WHERE id = '[that driver's id]';
+
+Show me the actual current values. This tells us:
+- If subscription_expires_at is still old/null → the UPDATE never 
+  ran or failed silently
+- If first_approval_granted is still false → the flag update is 
+  also failing (suggests the whole UPDATE statement for this 
+  driver isn't executing)
+- If subscription_expires_at shows a wrong date (e.g. only +3 days, 
+  or unchanged) → the calculation logic itself is wrong, not a 
+  connection issue
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Add explicit logging and re-test
+═══════════════════════════════════════════════════════════════
+
+Add console.log right before and after the UPDATE in the approve 
+handler:
+
+  console.log('Approving driver:', driverId, 
+              'firstApproval:', firstApprovalGranted,
+              'newExpiry:', newExpiryDate)
+  
+  const { data, error } = await db.update(usersTable)
+    .set({ account_status: 'approved', 
+           subscription_expires_at: newExpiryDate,
+           first_approval_granted: true })
+    .where(eq(usersTable.id, driverId))
+  
+  console.log('Update result:', data, 'Error:', error)
+
+Approve a NEW test driver (fresh one, not previously touched) and 
+show me the actual console output.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Fix based on findings
+═══════════════════════════════════════════════════════════════
+
+Based on what Steps 2-3 reveal, fix the actual root cause:
+- If the UPDATE silently fails → check for a missing await, 
+  unhandled promise, or RLS blocking the service-role connection
+- If the calculation is wrong → fix the date math
+- If first_approval_granted check is inverted or missing → fix 
+  the conditional logic
+
+═══════════════════════════════════════════════════════════════
+## Do not report fixed without showing the actual before/after 
+## database values for a real test driver
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,52 @@
+═══════════════════════════════════════════════════════════════
+NEW ERROR after deploying the fix
+═══════════════════════════════════════════════════════════════
+Testing the new "Approve" button on the live admin panel now
+throws: "Unexpected token '<', <!DOCTYPE '... is not valid JSON"
+
+This means the frontend's fetch("/api/data/payments/:id/approve")
+call is receiving an HTML page back (likely index.html or a 404
+page) instead of JSON from the backend. The request is not reaching
+the new endpoint at all.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — DIAGNOSE
+═══════════════════════════════════════════════════════════════
+1. Confirm the app was actually republished/redeployed after the
+   handleApprove + new endpoint changes — check the deployment
+   timestamp vs the commit timestamp of these changes.
+
+2. Confirm the exact route registration for the new endpoint in
+   data.ts — is it correctly mounted under /api/ in the main server
+   file (e.g. app.use("/api/data", dataRouter) or similar)? Show me
+   the exact router mounting code.
+
+3. Confirm the frontend fetch URL in payments.tsx matches EXACTLY
+   the backend route path (including any router prefix) — show me
+   both side by side.
+
+4. Test the endpoint directly (not through the UI) — run a curl or
+   fetch test against the live deployed URL's
+   /api/data/payments/:id/approve path with a real payment id and
+   show me the raw response (status code + body).
+
+5. Check whether this is the same SPA-fallback issue from earlier —
+   does the production static file host's rewrite rule
+   ([[deployment.rewrites]] from = "/*" to = "/index.html") happen
+   to catch /api/* requests too when it shouldn't? Confirm /api/*
+   paths are excluded from that catch-all rewrite in production.
+
+Report findings before fixing.
+
+═══════════════════════════════════════════════════════════════
+STEP 2 — FIX AND REDEPLOY
+═══════════════════════════════════════════════════════════════
+Apply whatever fix is needed based on Step 1, then redeploy/republish
+and confirm the live URL responds correctly.
+
+═══════════════════════════════════════════════════════════════
+STEP 3 — RETEST
+═══════════════════════════════════════════════════════════════
+Click Approve on a real pending payment in the live admin panel.
+Confirm it succeeds with no JSON parse error, and show me the
+[SUBSCRIPTION WRITE] server log line for that approval.

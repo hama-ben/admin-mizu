@@ -1,0 +1,84 @@
+Three improvements needed, building on what already works:
+
+═══════════════════════════════════════════════════════════════
+## PART 1 — Add a 2-day trust bonus on first document approval
+═══════════════════════════════════════════════════════════════
+
+When admin approves a driver's documents for the FIRST TIME 
+(first_approval_granted = false), in addition to the existing 
+30-day gift, also add 2 extra bonus days as a thank-you for trust.
+
+Update the approve handler:
+  - subscription_expires_at = NOW() + 30 days + 2 days = NOW() + 32 days
+  - (this replaces the simple "+30 days" calculation with "+32 days" 
+    for first-time approvals only)
+  - Re-approvals (first_approval_granted already true) stay 
+    unchanged — no bonus days added again
+
+Update the announcement sent on first approval to mention this:
+  Title: "🎉 تم قبولك بيننا"
+  Content: "تهانينا! حصلت على هدية 30 يوماً + يومين إضافيين كمكافأة 
+  على ثقتك بنا. مرحباً بك في عائلة ميزو!"
+
+═══════════════════════════════════════════════════════════════
+## PART 2 — Payment receipt approval also adds 30 days
+═══════════════════════════════════════════════════════════════
+
+Confirm/verify the EXISTING subscription payment approval flow 
+(Payments page in admin, subscription_payments table) still 
+correctly does this — if it was changed or removed during today's 
+migration work, restore it:
+
+When admin approves a subscription_payments record:
+  - subscription_expires_at = the LATER of (NOW(), current 
+    subscription_expires_at) + 30 days
+  - This is SEPARATE from the document-approval gift — this is 
+    for recurring monthly payments after a driver's free period ends
+  - Send targeted announcement:
+    Title: "تم قبول دفع وصلك ✅"
+    Content: "تم إضافة 30 يوماً إلى حسابك"
+
+Show me the current code for this handler and confirm it's intact 
+and working after today's Supabase migration.
+
+═══════════════════════════════════════════════════════════════
+## PART 3 — Add "السائقون المرفوضون" (Rejected Drivers) page
+═══════════════════════════════════════════════════════════════
+
+Add a new sidebar page in the admin panel for rejected drivers 
+(this was planned earlier but needs to be confirmed/built now 
+given today's table changes).
+
+Query:
+  SELECT * FROM users 
+  WHERE user_type = 'سائق' AND account_status = 'rejected'
+  JOIN driver_details ON driver_details.driver_id = users.id
+
+Each card shows:
+  - Name, phone, registration date
+  - Uploaded documents (viewable/clickable)
+  - Two buttons: "قبول الآن" (green) and "حذف نهائي" (red)
+
+"قبول الآن":
+  - Same logic as Part 1 (checks first_approval_granted, grants 
+    30+2 days if first time, simple status change if not)
+  - Removes driver from rejected list
+
+"حذف نهائي":
+  - Confirmation dialog first
+  - Deletes user row, driver_details row, and Supabase Auth account
+  - Irreversible
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ New driver's first document approval → subscription_expires_at 
+   = NOW() + 32 days (30 gift + 2 bonus)
+✅ Announcement mentions both the 30 days and the 2 bonus days
+✅ Re-approved driver (was rejected once before) → no bonus days, 
+   just status change
+✅ Payment receipt approval still correctly adds 30 days 
+   (separate from document approval)
+✅ "السائقون المرفوضون" page shows rejected drivers with their docs
+✅ "قبول الآن" works and applies correct gift logic
+✅ "حذف نهائي" removes the account completely

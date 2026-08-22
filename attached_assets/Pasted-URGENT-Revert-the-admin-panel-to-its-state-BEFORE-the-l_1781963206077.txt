@@ -1,0 +1,76 @@
+URGENT: Revert the admin panel to its state BEFORE the last change 
+(the one that introduced the Express /api/data/* proxy and broke 
+every page with "Error fetching X" toasts).
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Rollback first
+═══════════════════════════════════════════════════════════════
+
+Use Replit's checkpoint/rollback feature to restore the version 
+from BEFORE the Express proxy + service-role-key change was 
+introduced. I want the admin panel back to the state where pages 
+loaded (even if showing zeros) with no error toasts.
+
+If rollback isn't available, manually revert:
+- Remove the /api/data/* Express proxy layer
+- Go back to direct Supabase client calls from the frontend pages
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — Connect directly to Supabase using the CONFIRMED real tables
+═══════════════════════════════════════════════════════════════
+
+These are the ACTUAL tables that exist in this Supabase project 
+(confirmed via Table Editor) — use ONLY these, do not use `users` 
+(it is permanently empty and unused):
+
+  drivers                — driver accounts/profiles
+  driver_details          — driver documents (truck photo, license)
+  driver_status            — online/offline/busy status
+  orders                  — customer orders
+  payments                 — general payments
+  subscription_payments    — driver subscription receipts (RLS: UNRESTRICTED)
+  announcements            — admin announcements
+  ratings / ratings_disputes — ratings and disputes
+  saved_locations           — UNRESTRICTED
+  push_subscriptions        — UNRESTRICTED
+
+NOTE: tables marked UNRESTRICTED have no RLS policies blocking 
+reads/writes — that's fine for service-role access but double 
+check anon-key access isn't needed anywhere insecurely.
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Rewire every page to the correct table
+═══════════════════════════════════════════════════════════════
+
+- Dashboard → counts/stats from `drivers`, `orders`, `subscription_payments`
+- Users page → query `drivers` (for driver role) — if there's no 
+  separate consumer/customer table, flag this clearly so we know 
+  consumers aren't tracked yet in a dedicated table
+- Orders page → `orders` table, joined with `drivers` for driver info
+- Driver Queue → `drivers` WHERE status/account_status = pending, 
+  joined with `driver_details` for document photos
+- Payments page → `subscription_payments` joined with `drivers` 
+  for driver name
+- Announcements page → `announcements` table (already mostly working)
+- Disputes page → `ratings_disputes` table (already mostly working)
+
+Use the Supabase JS client directly from each page with the anon 
+key for reads where RLS allows it, and only use service role key 
+where genuinely required (e.g. admin write actions like approve/reject).
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Keep everything else exactly as it was working before
+═══════════════════════════════════════════════════════════════
+
+Do NOT change: existing UI layout, existing approve/reject button 
+behavior, existing announcement targeting logic — only fix the 
+data connection layer to use the correct tables.
+
+═══════════════════════════════════════════════════════════════
+## Test after fixing:
+═══════════════════════════════════════════════════════════════
+✅ No "Error fetching X" toasts on any page
+✅ Dashboard shows the 7 stat cards again (even if some are 0, 
+   no errors)
+✅ Driver Queue shows any pending drivers from the `drivers` table
+✅ All pages load cleanly without console errors

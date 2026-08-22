@@ -1,0 +1,67 @@
+# Replit Build Prompt — Al-Shaibia Admin Dashboard
+
+Copy everything below into Replit's AI Agent.
+
+---
+
+Build (or upgrade) a full admin dashboard web app called **"Al-Shaibia Admin Panel"** for a ride-hailing / delivery platform operating in Algeria. Use a dark theme with a teal/cyan accent color, a fixed left sidebar (logo "الشعبية" + "Admin Panel" subtitle), and the following nav items: Dashboard, Users, Orders, Driver Queue, Payments (مدفوعات), Announcements, Complaints, Disputes.
+
+**Connect the entire app directly to Supabase** (use the Supabase JS client with the project URL and anon/service key stored as Replit Secrets). Every page below must read/write live data from Supabase tables, not mock data. Use Supabase real-time subscriptions where useful (e.g. live counts on the Dashboard, live new entries in Driver Queue).
+
+## 1. Dashboard Overview Page
+- Top stat cards: Total Users, Consumers, Drivers, Orders Completed, Total Revenue (formatted in DZD).
+- Two secondary cards: "Active Drivers" (drivers currently online and accepting rides) and "Pending Verifications" (drivers waiting for document approval in the queue).
+- A line/area chart titled "User Signups (Last 30 Days)" plotting new user registrations per day, pulled from the `created_at` field of the users table.
+- All numbers must be computed live with Supabase aggregate queries (counts, sums), not hardcoded.
+
+## 2. Users Management Page
+- Tabs: All Users / Consumers / Drivers.
+- A search input that filters by name or phone number (live search against Supabase).
+- A "Wilaya" dropdown filter listing all 58 Algerian wilayas plus an "All Wilayas" option.
+- Table columns: Name, Phone, Role, Location (Wilaya), Verified (yes/no badge), Joined (date).
+- Pagination or infinite scroll for large user lists.
+
+## 3. Orders Page (long-term order history)
+- Must display the **entire order history** of the platform — from the very first order ever placed to the most recent one (not just recent orders).
+- Filters: a single "Status" dropdown combining all order states (Pending, Completed, Rejected/Cancelled, etc.) so the admin can search across all statuses from one control; a date-range picker (from/to); and a wilaya filter/search so orders can be found by province.
+- Table columns: Order ID, Customer, Driver, Details, Price, Status (colored badge), Date.
+- Include an "Export CSV" button to download the filtered results.
+
+## 4. Driver Queue Page (document verification)
+- A banner at the top showing the "Official CCP Account for Verification" number, with a note to verify payment receipts against this account before approving anything.
+- A card grid of newly registered drivers awaiting verification. Each card shows the driver's name and surname.
+- Clicking a card opens the driver's uploaded documents: truck/vehicle photo and driving license photo, viewable at full size.
+- Next to each driver's name, show Approve and Reject action buttons that update the driver's status in Supabase.
+- If the driver has also submitted a CCP subscription payment receipt, display that receipt image on the same card/modal with its own approve/reject action.
+
+## 5. Payments Page (مدفوعات — "Payments Pending Confirmation")
+- Tabs: Pending / Approved / Rejected.
+- Top banner repeating the CCP Verification Account number for cross-checking incoming transfers.
+- A "Total Revenue" summary (sum of all approved payments).
+- A revenue-by-wilaya breakdown: a dropdown to filter revenue by wilaya (All Wilayas / Biskra / etc., covering all 58 wilayas).
+- A chart-type selector letting the admin switch the revenue chart between Line / Bar / Pie (or similar) views.
+- Each pending payment card should show the driver's name, submitted receipt image, amount, and Approve/Reject buttons.
+
+## 6. Announcements Page
+- "Create New Announcement" form with: Title input, Badge Type dropdown (Info / Warning / Success / Promo), Target Audience dropdown (Everyone / Drivers / Consumers), Message Body textarea, and a "Publish Announcement" button that inserts into Supabase and is immediately visible to the selected audience in the user-facing app.
+- A "Past Announcements" list/grid below showing previously published announcements with their title, audience, and date.
+
+## 7. Disputes / Ratings Page (rating-disputes)
+- Display driver ratings and any disputed/flagged ratings submitted by users.
+- Include a sort control to rank drivers from best-to-worst rating or worst-to-best.
+- Include a wilaya column/filter so ratings can be reviewed per province.
+- Each entry should show driver name, rating value, related comment/complaint text, wilaya, and moderation actions (resolve/dismiss).
+
+## Supabase Schema (create if not already present)
+- `users`: id, full_name, phone, role (`consumer` | `driver`), wilaya, is_verified, created_at
+- `drivers`: user_id (FK), truck_photo_url, license_photo_url, status (`pending` | `approved` | `rejected`), is_online
+- `orders`: id, customer_id (FK), driver_id (FK), details, price, status, wilaya, created_at
+- `payments`: id, driver_id (FK), amount, receipt_url, status (`pending` | `approved` | `rejected`), created_at
+- `announcements`: id, title, badge_type, target_audience, message, created_at
+- `ratings_disputes`: id, driver_id (FK), rating, comment, wilaya, status, created_at
+
+Add Row Level Security (RLS) policies so only authenticated admin users can read/write these tables, and use Supabase Storage for the truck photo, license photo, and payment receipt uploads.
+
+## Design Notes
+- Keep the dark navy/teal aesthetic shown in the reference screenshots, with the Arabic "الشعبية" logo and bilingual labels (Arabic for sidebar items like مدفوعات, English for table/page content) exactly as in the current app.
+- All stat numbers, tables, and charts must update live from Supabase — no placeholder/static data.

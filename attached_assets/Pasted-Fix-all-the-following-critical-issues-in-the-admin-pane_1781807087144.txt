@@ -1,0 +1,94 @@
+Fix all the following critical issues in the admin panel:
+
+═══════════════════════════════════════════════════════════════
+## BUG 1 — "Could not find run command"
+═══════════════════════════════════════════════════════════════
+
+The app fails to start with "Could not find run command" error.
+
+Fix:
+- Check .replit file and make sure the run command is correct
+- Check package.json for the correct start/dev script
+- Make sure the workflow is properly configured
+- The app should start successfully with no errors
+
+═══════════════════════════════════════════════════════════════
+## BUG 2 — Black screen when clicking any page/section
+═══════════════════════════════════════════════════════════════
+
+When clicking any menu item or route in the admin panel,
+a black/blank screen appears with nothing rendered.
+
+This is likely caused by one of:
+- React Router routes not configured correctly
+- Components crashing silently with no error boundary
+- Auth session not being passed to protected routes
+- Vite build/bundle error
+- Missing lazy-loaded component
+
+Fix:
+- Add an ErrorBoundary around all route components to 
+  catch and display errors instead of black screen
+- Check browser console for any JS errors and fix them
+- Verify all imports in every page component are correct
+- Make sure React Router routes match the actual component 
+  file paths exactly
+- Verify Supabase session is available before rendering 
+  protected pages — if session is null, redirect to login 
+  instead of rendering a blank page
+- Check that all page components have a valid default export
+
+═══════════════════════════════════════════════════════════════
+## BUG 3 — Announcements publish error
+═══════════════════════════════════════════════════════════════
+
+Announcements fail to publish from the admin panel.
+
+Fix:
+- First run this to check EXACT column names in Supabase:
+  SELECT column_name FROM information_schema.columns 
+  WHERE table_name = 'announcements';
+
+- Update the insert query to use ONLY columns that actually 
+  exist in the table
+- Do not insert into columns that don't exist
+- After fix: admin should publish announcements with no errors
+  and they appear in "Past Announcements" immediately
+
+═══════════════════════════════════════════════════════════════
+## BUG 4 — Publishing fails (Replit deploy)
+═══════════════════════════════════════════════════════════════
+
+The app cannot be published/deployed on Replit.
+
+Fix:
+- Make sure the build command works: npm run build
+- Make sure the start command is defined in package.json
+- Make sure .replit file has correct [deployment] section:
+
+  [deployment]
+  deploymentTarget = "static" 
+  (or "autoscale" if it has a backend)
+  
+  build = ["npm", "run", "build"]
+  run = ["npm", "run", "preview"]
+  (or the correct start command for this project)
+
+- If it is a Vite project, the correct commands are:
+  build: "vite build"
+  preview/run: "vite preview --port 5000 --host 0.0.0.0"
+
+- Make sure vite.config.ts has:
+  server: { host: '0.0.0.0', port: 5000 }
+  preview: { host: '0.0.0.0', port: 5000 }
+
+═══════════════════════════════════════════════════════════════
+## AFTER ALL FIXES — Verify:
+═══════════════════════════════════════════════════════════════
+
+✅ App starts with no "run command" error
+✅ All pages render correctly — no black screens
+✅ Admin can log in and navigate all sections
+✅ Announcements publish successfully
+✅ App deploys and is accessible via the published URL
+✅ No console errors on any page

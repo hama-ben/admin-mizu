@@ -1,0 +1,106 @@
+═══════════════════════════════════════════════════════════════
+CRITICAL FINDING — root cause identified from console logs
+═══════════════════════════════════════════════════════════════
+Confirmed via live browser console logs on the deployed admin panel:
+two payment approvals for the same driver, 26 seconds apart, both
+read almost the same base subscription_expires_at value and both
+wrote the SAME final date (2026-08-06) instead of stacking. This is
+a classic lost-update race condition, and it is 100% reproducible.
+
+Root cause: the payment approval logic in the Admin Panel's
+handleApprove function runs ENTIRELY in the FRONTEND (browser),
+calling supabase.from(...) directly from the client:
+  1. It SELECTs the driver's current subscription_expires_at
+  2. It computes a new date in JavaScript
+  3. It UPDATEs the row separately
+
+This two-step (read-then-write) pattern can NEVER be made safe
+against race conditions, no matter how the read logic is written —
+there is always a time gap between step 1 and step 3 during which
+a second approval can read the same stale value. This is true
+regardless of how "correct" the read logic looks; the problem is
+timing, not logic.
+
+This also explains why all our previous backend fixes (atomic
+GREATEST SQL, transactions, 409 idempotency guard in admin.ts)
+never took effect for this flow — this frontend code never goes
+through the backend API at all.
+
+Additionally, the frontend code adds "+32 days" for a PAYMENT
+approval, which is WRONG. 32 days is exclusive to the one-time
+first-approval document gift — a completely separate action.
+Payment approvals should add 30 days (or months * 30).
+
+═══════════════════════════════════════════════════════════════
+REQUIRED FIX
+═══════════════════════════════════════════════════════════════
+IMPORTANT: Do not simplify or "improve" the date-reading logic
+inside the frontend handleApprove function. The frontend must STOP
+writing to the database directly, entirely. All subscription date
+math must move to the backend API call. This is non-negotiable —
+any frontend-side read-then-write pattern, no matter how it's
+written, cannot be race-condition-safe. Only a single atomic SQL
+statement executed by the backend/database can guarantee correct
+stacking under concurrent approvals.
+
+1. Remove the direct supabase.from("subscription_payments").update(...)
+   and supabase.from("users").update(...) calls from handleApprove
+   in the Admin Panel entirely.
+
+2. Replace handleApprove with a call to the EXISTING backend endpoint
+   we already built and fixed: POST /admin/payments/:paymentId/approve
+   in admin.ts (the one using the atomic
+   GREATEST(subscription_expires_at, NOW()) + INTERVAL '30 days' SQL,
+   wrapped in a transaction, with the 409 idempotency guard and
+   [SUBSCRIPTION WRITE] audit logging).
+
+3. handleApprove should become simply:
+   - Call the backend API endpoint with the payment ID (using the
+     same adminFetch utility already used elsewhere in this panel)
+   - On success: remove the payment from the pending list, show a
+     success toast with the new expiry date returned by the API
+   - On 409: show an "already processed" toast
+   - On other errors: show an error toast
+   - NO date math, NO "days to add" logic, NO direct Supabase table
+     writes should exist in the frontend AT ALL. The backend is the
+     single source of truth for this calculation.
+
+═══════════════════════════════════════════════════════════════
+STEP 1 — DIAGNOSE FIRST, NO FIXES YET
+═══════════════════════════════════════════════════════════════
+1. Confirm: does the Admin Panel have ANY other place (besides
+   handleApprove) that writes to subscription_expires_at or
+   subscription_payments directly via the Supabase client from the
+   frontend? Search the entire admin panel codebase for
+   "subscription_expires_at" and "subscription_payments" and list
+   every match with file/line — including reject and any other
+   payment-related handler.
+
+2. Confirm the exact backend endpoint path and the adminFetch call
+   pattern already used elsewhere in this panel, so handleApprove
+   can be rewritten consistently with existing conventions.
+
+Report findings before changing any code.
+
+═══════════════════════════════════════════════════════════════
+STEP 2 — FIX
+═══════════════════════════════════════════════════════════════
+Rewrite handleApprove (and any other direct-write instances found
+in Step 1) to go through the backend API exclusively. Show me the
+full diff.
+
+═══════════════════════════════════════════════════════════════
+STEP 3 — TEST ON LIVE DEPLOYMENT
+═══════════════════════════════════════════════════════════════
+After deploying the fix, approve two payments for the same driver
+within 30 seconds of each other on the LIVE admin panel. Confirm
+via server-side [SUBSCRIPTION WRITE] logs (not frontend console)
+that both stack correctly and add 30 days each (not 32), and that
+the final result is roughly 60 days from the original base, not a
+single 30/32-day value repeated twice.
+
+═══════════════════════════════════════════════════════════════
+CONSTRAINTS
+═══════════════════════════════════════════════════════════════
+Do not touch Orders, Maps, Drivers routing logic, the support chat/
+Realtime code, or the SPA rewrite fix.

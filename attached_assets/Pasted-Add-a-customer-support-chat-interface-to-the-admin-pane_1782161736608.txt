@@ -1,0 +1,94 @@
+Add a customer support chat interface to the admin panel, 
+connected to the existing `support_messages` table.
+
+═══════════════════════════════════════════════════════════════
+## STEP 1 — Verify the existing support_messages schema first
+═══════════════════════════════════════════════════════════════
+
+Before writing any code, run:
+  SELECT column_name, data_type FROM information_schema.columns 
+  WHERE table_name = 'support_messages';
+
+Show me the actual columns. We know from earlier today it has at 
+least: id, user_id (nullable), message, status, created_at.
+
+It likely needs new columns added for two-way conversation:
+  - sender_type ('user' / 'admin') — add if missing, default 'user'
+  - admin_id (nullable, uuid) — add if missing
+
+Run the ALTER TABLE statements needed, show me the result.
+
+═══════════════════════════════════════════════════════════════
+## STEP 2 — New sidebar page: "خدمة العملاء" (Support Chat)
+═══════════════════════════════════════════════════════════════
+
+Add a new sidebar item showing all support conversations, grouped 
+by user_id (one thread per user — driver or customer).
+
+Left panel: list of conversations sorted by most recent message, 
+showing:
+  - User name (join with users table)
+  - User type badge (سائق / مستهلك)
+  - Last message preview (truncated)
+  - Last message timestamp
+  - Unread indicator (a message with sender_type='user' that 
+    hasn't been viewed by admin yet — add an `admin_viewed_at` 
+    column per conversation if needed, or track simply by 
+    "latest message sender_type = user" as the unread signal)
+
+═══════════════════════════════════════════════════════════════
+## STEP 3 — Conversation view (right panel)
+═══════════════════════════════════════════════════════════════
+
+Clicking a conversation shows the full message history in 
+chronological order, chat-bubble style:
+  - User messages: left-aligned (or right, given RTL — pick 
+    whichever side matches the app's existing chat-like UI 
+    conventions, default: user messages on the right since 
+    this is RTL Arabic)
+  - Admin messages: opposite side, different background color
+
+Each bubble shows the message text and timestamp.
+
+═══════════════════════════════════════════════════════════════
+## STEP 4 — Admin reply input
+═══════════════════════════════════════════════════════════════
+
+Text input at the bottom: "اكتب ردك هنا..." + send button.
+
+On send:
+  INSERT INTO support_messages 
+    (user_id, message, sender_type, admin_id, created_at, status)
+  VALUES (theUserId, replyText, 'admin', currentAdminId, NOW(), 'replied')
+
+Also update the conversation's overall status if there's a 
+status field meant to track "needs admin attention" vs "replied".
+
+═══════════════════════════════════════════════════════════════
+## STEP 5 — Real-time updates
+═══════════════════════════════════════════════════════════════
+
+Subscribe to Supabase realtime on `support_messages` table 
+(INSERT events):
+- New incoming user messages appear in the conversation list/view 
+  without manual refresh
+- Sidebar badge shows live count of conversations with unread 
+  user messages
+
+═══════════════════════════════════════════════════════════════
+## STEP 6 — Search and filter
+═══════════════════════════════════════════════════════════════
+
+- Search conversations by user name or phone
+- Filter: All / Unread / سائق / مستهلك
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ Admin sees list of all support conversations sorted by recency
+✅ Clicking a conversation shows full message history correctly 
+   ordered
+✅ Admin types and sends a reply → saved with sender_type='admin'
+✅ New incoming user message appears in real time without refresh
+✅ Unread indicator correctly reflects conversations needing reply
+✅ Search and filters work correctly

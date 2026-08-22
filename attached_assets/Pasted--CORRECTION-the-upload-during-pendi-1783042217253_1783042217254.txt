@@ -1,0 +1,43 @@
+═══════════════════════════════════════════════════════════════
+CORRECTION — the upload-during-pending scenario is IMPOSSIBLE
+in the real app
+═══════════════════════════════════════════════════════════════
+I was wrong to suspect the receipt-upload bonus caused the reset
+between the two test approvals. The driver-side UI physically closes
+the upload form while a payment is pending — a real driver CANNOT
+upload a second receipt while waiting for admin review. So a second
+upload could not have happened from real user action.
+
+This means when you tested "two approvals" and saw two DIFFERENT
+payment_ids (9aa83beb... then f7e7a11b...), that second payment must
+have been created some OTHER way — likely by your own test setup
+(a direct SQL INSERT into subscription_payments, or a direct API
+call to the upload endpoint bypassing the frontend's pending-check),
+not through the actual driver UI.
+
+═══════════════════════════════════════════════════════════════
+QUESTION FOR YOU
+═══════════════════════════════════════════════════════════════
+How exactly was the second payment (f7e7a11b...) created during
+that test? Did you (the agent) insert it directly via SQL, call the
+upload endpoint directly, or was it already sitting in the database
+from earlier testing? I need to know this to determine whether the
+reset-to-3-days behavior is a real bug or just an artifact of
+bypassing the frontend's pending-payment guard during testing.
+
+═══════════════════════════════════════════════════════════════
+CORRECTED TEST PLAN
+═══════════════════════════════════════════════════════════════
+To properly test approval stacking without any upload interference:
+1. Manually pre-create TWO pending payments for the same driver via
+   direct SQL INSERT into subscription_payments (both status =
+   'pending', same driver_id) BEFORE running any approvals — this
+   simulates "driver had two receipts already queued" without
+   touching the upload bonus logic at all.
+2. Approve payment 1 → log and check subscription_expires_at.
+3. Approve payment 2 (no upload in between) → log and check again.
+4. Confirm true stacking (~60 days total), isolating the approval
+   logic from the upload logic entirely.
+
+Please run this corrected test and report the [PRE-UPDATE] and
+[SUBSCRIPTION WRITE] logs for both approvals.

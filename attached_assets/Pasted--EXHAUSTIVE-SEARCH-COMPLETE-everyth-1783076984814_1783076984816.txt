@@ -1,0 +1,54 @@
+═══════════════════════════════════════════════════════════════
+EXHAUSTIVE SEARCH COMPLETE — everything checks out clean, yet the
+bug is 100% reproducible via direct DB verification
+═══════════════════════════════════════════════════════════════
+Confirmed via direct SQL: zero triggers on users or subscription_
+payments, zero database functions referencing subscription_expires_at,
+and the only Edge Function (notify-support) is unrelated to
+subscriptions. Both the al-shaibia-admin reject endpoint and the
+Mizu/nano admin.ts reject endpoint are confirmed clean by code review.
+
+Since nothing "should" be writing to this column on reject, but the
+database value provably changes anyway, we need the SAME diagnostic
+technique that worked for the approve bug: add temporary logging
+directly inside the reject request itself, purely for visibility.
+
+═══════════════════════════════════════════════════════════════
+REQUIRED DIAGNOSTIC (add to POST /api/data/payments/:id/reject)
+═══════════════════════════════════════════════════════════════
+Immediately inside this endpoint, BEFORE and AFTER the existing
+transaction runs (even though it shouldn't touch this column),
+add a plain SELECT of the driver's subscription_expires_at and log
+both values, plus the exact server timestamp of each read:
+
+console.log("[REJECT DIAGNOSTIC] driver_id:", payment.driverId,
+  "| subscription_expires_at BEFORE reject txn:", <value>,
+  "| server time:", new Date().toISOString());
+
+... existing reject transaction (unchanged) ...
+
+console.log("[REJECT DIAGNOSTIC] driver_id:", payment.driverId,
+  "| subscription_expires_at AFTER reject txn:", <value>,
+  "| server time:", new Date().toISOString());
+
+Also add a THIRD read 3 seconds later (setTimeout, fire-and-forget,
+just for this diagnostic — don't block the response) to catch any
+delayed/async write that might happen shortly after the request
+completes:
+
+setTimeout(async () => {
+  const val = await <plain select>;
+  console.log("[REJECT DIAGNOSTIC] driver_id:", payment.driverId,
+    "| subscription_expires_at +3s AFTER reject:", val,
+    "| server time:", new Date().toISOString());
+}, 3000);
+
+Republish, then I will reject one real pending payment and paste all
+three log lines here. This will tell us definitively whether the
+column changes WITHIN this request, shortly AFTER it (async), or
+neither — in which case the write is coming from a completely
+different, not-yet-identified process (perhaps triggered by the
+"announcements" insert reaching the driver's device, which we
+haven't been able to trace client-side since it's read-only there —
+or possibly a manual/duplicate admin action happening at the same
+moment).

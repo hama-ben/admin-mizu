@@ -1,0 +1,52 @@
+═══════════════════════════════════════════════════════════════
+DEFINITIVE PROOF — trigger theory ELIMINATED
+═══════════════════════════════════════════════════════════════
+Query 1 (triggers on users table): "Success. No rows returned" —
+CONFIRMED: zero triggers exist on public.users.
+
+Query 3 (manual UPDATE + immediate SELECT via Supabase SQL Editor):
+  RETURNING: 2026-08-02 00:50:39.453653
+  SELECT right after: 2026-08-02 00:50:39.453653
+IDENTICAL — the write persisted correctly and immediately when done
+directly through Supabase SQL Editor.
+
+CONCLUSION: This proves candidate (B) — the server's pg connection
+is NOT writing to the same database that Supabase SQL Editor reads
+from. The database itself is completely healthy.
+
+═══════════════════════════════════════════════════════════════
+REQUIRED ACTION
+═══════════════════════════════════════════════════════════════
+1. Print the exact Supabase/Postgres connection string or DATABASE_URL
+   environment variable this server actually uses at runtime (redact
+   only the password, keep host, port, database name, and any pooler
+   path visible). Compare it character-by-character against this
+   project's real Supabase connection info: project ref
+   "aeoyteruvcxqimwusrey", host should be
+   db.aeoyteruvcxqimwusrey.supabase.co (or the pooler equivalent
+   aws-*.pooler.supabase.com with the correct project ref embedded).
+
+2. Check for MULTIPLE possible env vars that could hold a database
+   URL (DATABASE_URL, SUPABASE_DB_URL, PG_CONNECTION_STRING, etc.) —
+   confirm which one is actually being read by the pg Pool
+   initialization code, and whether there's a stale/wrong one set
+   in this Replit project's Secrets that doesn't match the intended
+   Supabase project.
+
+3. Check if this server might be connecting through Supabase's
+   connection pooler (PgBouncer, port 6543) in "transaction" pooling
+   mode, which can sometimes cause session-level assumptions in the
+   code (like relying on RETURNING behaving a certain way across
+   statements) to behave unexpectedly, OR check if the pooler
+   connection is pointed at a DIFFERENT Supabase project than
+   aeoyteruvcxqimwusrey entirely — e.g. a leftover connection string
+   from an earlier test/staging project.
+
+4. Add a temporary diagnostic log at server startup (not per-request)
+   that prints: the resolved host, port, and database name the pg
+   Pool is configured with (password redacted). Show me this output
+   from the next deployment log.
+
+Do not touch the approve endpoint's SQL logic again — it has already
+been proven correct via Query 3. The problem is exclusively which
+database the server is physically connected to.

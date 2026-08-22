@@ -1,0 +1,93 @@
+# Al-Shaibia Admin Panel — New Features Prompt
+
+## ⚠️ 0. URGENT SECURITY FIX — do this FIRST, before the 4 features below
+
+**Status update: part of this has already been fixed directly in the code you're about to run** (in the zip I'm giving you, `admin-main-fixed.zip`). Specifically, already done for you:
+- ✅ `artifacts/api-server/src/routes/data.ts` now requires a valid Supabase Auth bearer token on every `/api/data/*` request (returns 401 otherwise).
+- ✅ `lib/api.ts` (`api.*` helpers and the new `authedFetch()`) now automatically attaches the current admin session's token to every request.
+- ✅ Fixed the driver-approval day bug (was granting 32 days on first approval — now correctly grants exactly 30).
+- ✅ Fixed the payment-approval day bug (was only granting 30 days — now correctly grants 33: 30 base + 3 gift).
+- ✅ Removed the payment-approval endpoint's incorrect `account_status = 'active'` write, which could silently activate a driver who hadn't been through document review yet.
+- ✅ Removed a legacy, unused `PATCH /drivers/:userId/status` endpoint that wrote an inconsistent `"active"` status literal instead of `"approved"`.
+
+**Still needed from you (this is the actual remaining work for this section):**
+
+### a) Build the admin login screen itself
+The backend now *requires* a valid session token — but there is still no `/login` page or auth-gated router in `App.tsx` to actually produce one. Add it now:
+- Create the primary admin account directly in the **Supabase dashboard** (Authentication → Users → Add user), not hardcoded anywhere in source:
+  - Email: `waterdrive213@gmail.com`
+  - Password: `hama123hama` (temporary — I'll rotate this myself in the Supabase dashboard right after login works).
+- Add a `/login` page using `supabase.auth.signInWithPassword({ email, password })`.
+- Wrap the `<Router>` in `App.tsx` with an auth guard driven by `supabase.auth.getSession()` / `onAuthStateChange`: no route under `AppLayout` should render without an active session. Add a logout button in `components/layout.tsx`.
+- Once this is in place, every existing page will start working again through the now-protected `/api/data/*` routes (they were returning 401 until this login exists — that 401 is expected and confirms the backend fix is working).
+
+### b) Lock down the Supabase RLS policies (this is a Supabase-dashboard/SQL change, not a code change)
+Run this in the Supabase SQL editor (or have the agent do it via a migration script) — the `admin_anon_all_*` policies in `supabase-schema.sql` still grant the public `anon` role unrestricted access to `users`, `orders`, `payments`, `announcements`, `ratings_disputes`, and the two storage buckets. Replace every `TO anon` policy with `TO authenticated`:
+```sql
+DROP POLICY IF EXISTS "admin_anon_all_users" ON public.users;
+CREATE POLICY "admin_authenticated_all_users"
+  ON public.users FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+```
+Repeat for `drivers`, `orders`, `payments`, `announcements`, `ratings_disputes`, and the `driver-documents`/`receipts` storage policies. Keep RLS enabled — just correctly scoped.
+
+### c) One-time data cleanup
+Run this once to normalize any rows left over from the removed legacy endpoint:
+```sql
+UPDATE public.users SET account_status = 'approved' WHERE account_status = 'active';
+```
+
+### d) Confirm no regressions
+After (a) and (b): the admin panel should be completely unusable until logging in with the credentials above; once logged in, every existing page should work exactly as before; and a request made with just the public anon key (e.g. via `curl`, no auth token) to these tables should now be rejected.
+
+---
+
+Add the following: an urgent security fix (section 0, do this first) and 4 new features (sections 1–4) to the existing admin panel (`artifacts/al-shaibia-admin`). This is the same Supabase project used by the Mizu consumer/driver app — reuse its exact tables and column names (snake_case: `users.account_status`, `users.subscription_expires_at`, `orders.total_price`, `orders.status`, `orders.driver_id`, `ratings.rated_user_id`, `ratings.stars`, etc.). Do not invent new tables where an existing one already fits.
+
+## 1. Right-click-style context menu on every user row (Users page — `pages/users.tsx`)
+
+Clicking a user's name/row in the Users table currently does nothing actionable. Add a context menu (use the existing shadcn `dropdown-menu` component already in `components/ui/dropdown-menu.tsx` — either trigger it on left-click of the row/name, or on right-click, whichever fits the existing table interaction pattern best) with exactly 3 options:
+
+### a) "View Profile" (رؤية الملف الشخصي)
+Opens a detail view/dialog whose content differs by `user_type`:
+
+- **If `user_type` = مستهلك (consumer)**: show name, phone, email, and two lists:
+  - All orders this consumer has placed (query `orders` where `user_id` = this user, most recent first, with status, price, date).
+  - The distinct drivers who delivered to them (derive from the same orders where `status` = 'تم التوصيل', joined to `users` on `driver_id` to get each driver's name/phone).
+
+- **If `user_type` = سائق (driver)**: show name, email, phone, current account status (Approved/Pending/Rejected/Suspended/Banned — see feature 4), their **live subscription day counter** (compute from `subscription_expires_at` vs now — reuse the same day/hour countdown logic already used elsewhere in this project, do not duplicate a second implementation), their **current presence status** (حاضر/استراحة/مغلق) by querying `driver_status.current_status` for this driver, their **overall average rating out of 5** (compute `AVG(stars)` from `ratings` where `rated_user_id` = this driver and `rater_type` = 'consumer' — do not store this as a cached column, always compute live so it can never drift out of sync), and their **personal earnings**.
+  - Earnings must be **computed live**, never a stored/incremented counter (to avoid the exact class of bug we already fixed in the driver subscription-day logic — a stored running total is one race condition away from drifting out of sync with reality). Compute it as `SUM(total_price)` from `orders` where `driver_id` = this driver and `status` = 'تم التوصيل'.
+
+### b) "Message via Support" (مراسلة كدعم فني)
+Navigates the admin directly to the Support Chat page (`pages/support-chat.tsx`) with this specific user's conversation already open/selected, ready to type — reuse the exact same chat UI and Realtime wiring already built for `pages/support-chat.tsx`, just pre-select this user's thread instead of requiring the admin to find it manually.
+
+### c) "Suspend / Ban" (طرد أو تعليق)
+Opens a small confirmation dialog offering two distinct actions (do not conflate them — they are different, intentional states):
+- **Suspend** (تعليق): for temporarily inactive/dormant accounts. Sets `account_status` = `"suspended"`.
+- **Ban** (طرد/حظر): for accounts that violated policy. Sets `account_status` = `"banned"`.
+
+Both new status values slot into the exact same `account_status` column and badge pattern already used for `"approved"` / `"pending"` / `"rejected"` in `getStatusBadge()` — add matching badge colors (e.g. gray for suspended, dark red/black for banned) rather than inventing a separate flag/column. A banned or suspended user must not be able to log into the driver/consumer app at all (this will require a small check added to the Mizu app's own login flow to reject these two statuses with a clear message — flag this as a cross-project follow-up if the admin panel and the Mizu app are separate Replit projects).
+
+## 2. Dashboard chart data-series toggle (`pages/dashboard.tsx`)
+
+The "Orders Per Day (Last 30 Days)" chart currently only ever shows order counts. Add a small toggle/segmented control (or a `select` dropdown) above the chart with 3 options that switch what the same chart visualizes, keeping the same 30-day date range and the same `AreaChart` component — just swap the underlying data query and the chart title:
+- **Orders per day** (current behavior — orders created per day).
+- **New consumers per day** (count of `users` where `user_type` = مستهلك, grouped by `created_at` day).
+- **New drivers per day** (count of `users` where `user_type` = سائق, grouped by `created_at` day).
+
+## 3. PDF export on the Orders page (`pages/orders.tsx`)
+
+Everything about the current "Export CSV" button and its filtering (status/date range) is correct and should stay exactly as-is — just add PDF as an additional export format alongside CSV, not a replacement. Add a second button/dropdown next to the existing "Export CSV" button labeled "Export PDF", which generates a PDF version of the exact same filtered order list currently shown in the table (same columns: Order ID, Customer, Driver, Details, Price, Status, Date). Use a lightweight client-side PDF generation approach (e.g. a library like `jspdf` + `jspdf-autotable` for a simple tabular PDF) rather than a heavy server-side rendering pipeline, since this is just a tabular export, not a richly designed document.
+
+## 4. Suspended & Banned drivers sections (new pages, mirroring `pages/rejected-drivers.tsx`)
+
+`pages/rejected-drivers.tsx` already exists as a reference pattern (query `users` where `account_status = 'rejected'`, empty-state illustration, etc.). Create two new pages following the exact same structure and query pattern:
+- **`pages/suspended-drivers.tsx`** — lists all users where `account_status = 'suspended'`.
+- **`pages/banned-drivers.tsx`** — lists all users where `account_status = 'banned'`.
+
+Add both to the sidebar navigation (`components/layout.tsx`) near the existing "السائقون المرفوضون" (Rejected Drivers) link, with matching Arabic labels (e.g. "السائقون المعلّقون" and "السائقون المحظورون") and appropriate icons. Each row in these two new lists needs a clear action button to reverse the state later — "رفع الحظر" (Unban) / "رفع التعليق" (Unsuspend) — which simply sets `account_status` back to `"approved"`. Do not touch `subscription_expires_at` or any day-counter logic when unbanning/unsuspending — reactivating an account must never grant, remove, or reset any subscription days; the driver's existing balance (whatever it was) must be exactly what they see again once reactivated.
+
+## General notes
+- Keep all new UI consistent with the existing dark theme and shadcn component set already used throughout this admin panel — no new visual language.
+- For any Supabase query pattern you're unsure of, look at how `pages/users.tsx` and `pages/rejected-drivers.tsx` already query the `users` table and mirror that exact style (client selection, column list, filters) rather than introducing a new querying pattern.
+- If you need to add `"suspended"` / `"banned"` to the underlying database column's allowed values (e.g. if there's a CHECK constraint or enum type on `account_status` in Supabase) rather than it being a free-text column, check that first and add a migration if needed — don't assume it will silently accept a new string.

@@ -1,0 +1,77 @@
+═══════════════════════════════════════════════════════════════
+CRITICAL — verified by direct code review of the exported project
+═══════════════════════════════════════════════════════════════
+I exported and reviewed this project's actual source code directly.
+Findings:
+
+1. artifacts/al-shaibia-admin/src/pages/payments.tsx — handleApprove
+   still does DIRECT frontend-to-Supabase writes (read subscription_
+   expires_at, compute +32 days in JavaScript, write back). It does
+   NOT call any backend API endpoint. This is the non-atomic,
+   race-condition-prone pattern we've been trying to eliminate.
+
+2. artifacts/al-shaibia-admin/src/pages/driver-queue.tsx —
+   handleApprove has the SAME direct-Supabase read-then-write pattern
+   (30 or 32 days), also frontend-only, also race-condition-prone.
+
+3. artifacts/al-shaibia-admin/src/pages/rejected-drivers.tsx —
+   handleApprove is WORSE: it does NOT read the current
+   subscription_expires_at at all. It unconditionally sets
+   subscription_expires_at = NOW() + daysToAdd, completely
+   overwriting/discarding any existing balance. This is a pure
+   data-loss bug, not just a race condition.
+
+4. artifacts/api-server/src/routes/data.ts — the only backend
+   endpoint touching payments (PATCH /api/data/payments/:id) is
+   ALSO not safe: it accepts subscription_expires_at as a value
+   sent FROM THE CLIENT in the request body and uses that as the
+   base date, rather than reading the authoritative value from the
+   database itself.
+
+Meanwhile, a SEPARATE project (this same team's Mizu/nano-main
+project, artifacts/api-server/src/routes/admin.ts) already has a
+CORRECT, atomic, transaction-safe implementation for this exact
+operation — using GREATEST(COALESCE(subscription_expires_at, NOW()),
+NOW()) + daysToAdd inside a db.transaction(), with a WHERE status =
+'pending' idempotency guard returning 409 on double-approval, and
+structured [SUBSCRIPTION WRITE PRE/POST] audit logging. This is the
+correct reference implementation.
+
+═══════════════════════════════════════════════════════════════
+REQUIRED FIX
+═══════════════════════════════════════════════════════════════
+1. In data.ts, replace the PATCH /api/data/payments/:id endpoint
+   with a proper POST /api/data/payments/:id/approve (and a
+   separate /reject) endpoint that:
+   - Never trusts a client-supplied subscription_expires_at
+   - Reads/writes atomically in ONE SQL statement using
+     GREATEST(COALESCE(subscription_expires_at, NOW()), NOW()) +
+     (daysToAdd * INTERVAL '1 day')
+   - Wraps the payment-status update and subscription update in a
+     single transaction
+   - Uses a WHERE status = 'pending' guard on the payment update to
+     prevent double-approval races, returning 409 if already processed
+   - Logs before/after values server-side for auditability
+   Mirror the exact working implementation already proven correct
+   in the Mizu/nano-main project's admin.ts — do not reinvent it.
+
+2. Rewrite handleApprove in ALL THREE frontend files (payments.tsx,
+   driver-queue.tsx, rejected-drivers.tsx) to call this ONE shared
+   backend endpoint exclusively. Remove every direct
+   supabase.from("users").update({ subscription_expires_at: ... })
+   call from the frontend entirely — there should be ZERO frontend
+   writes to this column anywhere in this project after the fix.
+
+3. rejected-drivers.tsx specifically needs the stacking logic added
+   (it currently has none) — appealing/re-approving a rejected
+   driver must ADD days on top of any existing balance via the same
+   backend endpoint, never overwrite.
+
+4. Show me a diff for all four files (data.ts + the three frontend
+   pages), confirm zero remaining direct-to-Supabase writes to
+   subscription_expires_at anywhere in this project, and confirm
+   which single backend endpoint each of the three approve buttons
+   now calls.
+
+Do not touch Orders, Maps, Drivers routing logic, the support chat/
+Realtime code, or the SPA rewrite fix.

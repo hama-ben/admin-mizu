@@ -1,0 +1,71 @@
+Add two navigation/visibility improvements to the admin panel.
+
+═══════════════════════════════════════════════════════════════
+## PART 1 — Quick link to Rejected Drivers from inside Driver Queue
+═══════════════════════════════════════════════════════════════
+
+On the Driver Queue page itself (not just the sidebar), add a 
+small link/button near the top, next to the page title:
+
+  "عرض السائقون المرفوضون (X)" 
+  → navigates to the Rejected Drivers page
+
+Where X is the live count of currently rejected drivers 
+(account_status = 'rejected'). If X = 0, hide the number or 
+show "0" without making it look urgent.
+
+═══════════════════════════════════════════════════════════════
+## PART 2 — New page: "الحسابات المنتهية" (Expired Accounts)
+═══════════════════════════════════════════════════════════════
+
+Add a new sidebar item: "الحسابات المنتهية" (Expired Accounts)
+
+Query:
+  SELECT * FROM users 
+  WHERE user_type = 'سائق' 
+  AND account_status = 'approved'
+  AND subscription_expires_at < NOW()
+  JOIN driver_details ON driver_details.driver_id = users.id
+
+This shows drivers who WERE approved and active, but whose 
+30/32-day (or renewed) subscription has run out and they haven't 
+paid again — they currently cannot use the app until they submit 
+a new payment receipt.
+
+Each card shows:
+  - Name, phone
+  - subscription_expires_at (the date it expired)
+  - How many days ago it expired (e.g. "منتهي منذ 5 أيام")
+  - Last payment receipt status, if any pending payment exists 
+    (link to view it in Payments page)
+
+No approve/reject buttons needed here — this is an informational 
+monitoring page so the admin knows who has lapsed and may want to 
+follow up with manually (e.g. reminder message). Optionally add 
+a single button:
+  "إرسال تذكير" → sends a targeted announcement:
+    Title: "تذكير بتجديد الاشتراك"
+    Content: "انتهت فترة اشتراكك، يرجى تجديد الدفع لمتابعة استقبال الطلبات"
+
+═══════════════════════════════════════════════════════════════
+## PART 3 — Badge counts in sidebar
+═══════════════════════════════════════════════════════════════
+
+Add small count badges in the sidebar (similar style to existing 
+notification badges) next to:
+  - "Driver Queue" → count of pending drivers
+  - "السائقون المرفوضون" → count of rejected drivers  
+  - "الحسابات المنتهية" → count of expired drivers
+
+These should update live (or at least refresh on page navigation) 
+so admin can see at a glance how many items need attention in 
+each category.
+
+═══════════════════════════════════════════════════════════════
+## Test after implementing:
+═══════════════════════════════════════════════════════════════
+✅ Driver Queue page shows quick link to Rejected Drivers with 
+   live count
+✅ "الحسابات المنتهية" page shows drivers whose subscription expired
+✅ "إرسال تذكير" button sends the correct announcement
+✅ Sidebar badges show correct counts for all 3 categories
