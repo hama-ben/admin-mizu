@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
+import type { PoolClient } from "pg";
 
 const { Pool } = pg;
 
@@ -371,7 +372,7 @@ router.get("/payments/summary", async (_req, res) => {
 // we return 409 — zero subscription extension happens.
 router.post("/payments/:id/approve", async (req, res) => {
   const { id } = req.params;
-  let client: Awaited<ReturnType<ReturnType<typeof getSupabasePool>["connect"]>> | null = null;
+  let client: PoolClient | null = null;
 
   try {
     const pool = getSupabasePool();
@@ -533,7 +534,7 @@ router.post("/payments/:id/approve", async (req, res) => {
 // 409 — no double-rejection is possible.
 router.post("/payments/:id/reject", async (req, res) => {
   const { id } = req.params;
-  let client: Awaited<ReturnType<ReturnType<typeof getSupabasePool>["connect"]>> | null = null;
+  let client: PoolClient | null = null;
 
   try {
     const pool = getSupabasePool();
@@ -673,7 +674,7 @@ router.post("/payments/:id/reject", async (req, res) => {
 // 0 and we return 409 — no double-rejection possible.
 router.post("/drivers/:userId/reject", async (req, res) => {
   const { userId } = req.params;
-  let client: Awaited<ReturnType<ReturnType<typeof getSupabasePool>["connect"]>> | null = null;
+  let client: PoolClient | null = null;
 
   try {
     const pool = getSupabasePool();
@@ -747,7 +748,7 @@ router.post("/drivers/:userId/reject", async (req, res) => {
 // correctly adds on top rather than overwriting.
 router.post("/drivers/:userId/approve", async (req, res) => {
   const { userId } = req.params;
-  let client: Awaited<ReturnType<ReturnType<typeof getSupabasePool>["connect"]>> | null = null;
+  let client: PoolClient | null = null;
 
   try {
     const pool = getSupabasePool();
@@ -848,7 +849,7 @@ async function transitionUserStatus(
   req: any,
   res: any,
 ) {
-  let client: Awaited<ReturnType<ReturnType<typeof getSupabasePool>["connect"]>> | null = null;
+  let client: PoolClient | null = null;
   try {
     const pool = getSupabasePool();
     client = await pool.connect();
@@ -1085,6 +1086,117 @@ router.get("/audit-log", async (req, res) => {
     res.json({ data: dataResult.rows, count: countResult.rows[0]?.count ?? 0 });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Driver suspension requests ──────────────────────────────────────────────
+router.get("/suspension-requests", async (_req, res) => {
+  try {
+    const db = adminClient();
+    const { data, error } = await db
+      .from("driver_suspension_requests")
+      .select("id, driver_id, request_type, reason, reason_text, status, created_at, reviewed_at, reviewed_by")
+      .order("status", { ascending: true })
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const driverIds = [...new Set((data ?? []).map((item: any) => item.driver_id))];
+    const { data: users, error: usersError } = driverIds.length
+      ? await db.from("users").select("id, name, phone, wilaya, commune").in("id", driverIds)
+      : { data: [], error: null };
+    if (usersError) throw usersError;
+    const usersById = new Map((users ?? []).map((user: any) => [user.id, user]));
+    res.json((data ?? []).map((item: any) => ({ ...item, driver: usersById.get(item.driver_id) ?? null })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/suspension-requests/pending-count", async (_req, res) => {
+  try {
+    const { count, error } = await adminClient()
+      .from("driver_suspension_requests")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (error) throw error;
+    res.json({ count: count ?? 0 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/suspension-requests/:id/decision", async (req, res) => {
+  const { status } = req.body as { status?: string };
+  if (status !== "approved" && status !== "rejected") {
+    res.status(400).json({ error: "Decision must be approved or rejected" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+    const requestResult = await client.query<{
+      id: string;
+      driver_id: string;
+      request_type: "suspend" | "lift";
+      reason: string;
+      reason_text: string | null;
+      status: string;
+    }>(
+      `SELECT id, driver_id, request_type, reason, reason_text, status
+       FROM public.driver_suspension_requests
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    const request = requestResult.rows[0];
+    if (!request) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Suspension request not found" });
+      return;
+    }
+    if (request.status !== "pending") {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "This suspension request was already reviewed" });
+      return;
+    }
+
+    if (status === "approved") {
+      const suspended = request.request_type === "suspend";
+      const suspensionReason = suspended ? (request.reason === "other" ? request.reason_text : request.reason) : null;
+      await client.query(
+        `INSERT INTO public.driver_details (driver_id, is_suspended, suspension_reason)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (driver_id) DO UPDATE
+         SET is_suspended = EXCLUDED.is_suspended,
+             suspension_reason = EXCLUDED.suspension_reason`,
+        [request.driver_id, suspended, suspensionReason],
+      );
+    }
+
+    const update = await client.query(
+      `UPDATE public.driver_suspension_requests
+       SET status = $1, reviewed_at = NOW(), reviewed_by = $2
+       WHERE id = $3 AND status = 'pending'`,
+      [status, (req as any).adminUser?.id ?? null, req.params.id],
+    );
+    if ((update.rowCount ?? 0) !== 1) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Suspension request changed concurrently — please retry" });
+      return;
+    }
+    await client.query("COMMIT");
+    await logAdminAction(req, status === "approved" ? "approve" : "reject", "driver_suspension_request", req.params.id, {
+      driverId: request.driver_id,
+      requestType: request.request_type,
+    });
+    res.json({ ok: true, status });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[SUSPENSION REQUEST] FAILED", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
   }
 });
 

@@ -128,6 +128,23 @@ export interface SupportMessage {
   admin_id?: string | null;
 }
 
+export type SuspensionRequestType = "suspend" | "lift";
+export type SuspensionRequestReason = "truck_issue" | "medical" | "personal_leave" | "other";
+export type SuspensionRequestStatus = "pending" | "approved" | "rejected";
+
+export interface DriverSuspensionRequest {
+  id: string;
+  driver_id: string;
+  request_type: SuspensionRequestType;
+  reason: SuspensionRequestReason;
+  reason_text: string | null;
+  status: SuspensionRequestStatus;
+  created_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  driver?: Pick<User, "id" | "name" | "phone" | "wilaya" | "commune"> | null;
+}
+
 export type PlatformRole = "consumer" | "driver";
 
 export interface PlatformStatus {

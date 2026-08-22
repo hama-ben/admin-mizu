@@ -14,6 +14,7 @@ import {
   MessageSquare,
   ScrollText,
   Power,
+  ClipboardList,
   ChevronRight,
   ChevronLeft,
   X,
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { usePendingDisputeCount } from "@/hooks/use-pending-disputes";
 import { useDriverCounts } from "@/hooks/use-driver-counts";
 import { useSupportUnreadCount } from "@/hooks/use-support-unread";
+import { useSuspensionRequestCount } from "@/hooks/use-suspension-request-count";
 import { SidebarContext, useSidebar } from "./sidebar-context";
 import { Topbar } from "./topbar";
 
@@ -40,6 +42,7 @@ const NAV_ITEMS = [
   { href: "/support",         label: "خدمة العملاء",         icon: MessageSquare   },
   { href: "/audit-log",       label: "سجل الإجراءات",        icon: ScrollText      },
   { href: "/platform-status", label: "حالة التطبيق",          icon: Power           },
+  { href: "/suspension-requests", label: "طلبات التعليق",       icon: ClipboardList  },
 ] as const;
 
 function SidebarContent({ collapsed }: { collapsed: boolean }) {
@@ -47,6 +50,7 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
   const pendingDisputes = usePendingDisputeCount();
   const driverCounts = useDriverCounts();
   const supportUnread = useSupportUnreadCount();
+  const suspensionRequests = useSuspensionRequestCount();
   const { toggleCollapsed, setMobileOpen } = useSidebar();
 
   const BADGES: Partial<Record<string, number>> = {
@@ -57,6 +61,7 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
     "/expired-accounts": driverCounts.expired   > 0 ? driverCounts.expired   : undefined,
     "/disputes":         pendingDisputes         > 0 ? pendingDisputes         : undefined,
     "/support":          supportUnread           > 0 ? supportUnread           : undefined,
+    "/suspension-requests": suspensionRequests > 0 ? suspensionRequests : undefined,
   };
 
   return (
