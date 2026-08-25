@@ -145,15 +145,6 @@ export interface DriverSuspensionRequest {
   driver?: Pick<User, "id" | "name" | "phone" | "wilaya" | "commune"> | null;
 }
 
-export type PlatformRole = "consumer" | "driver";
-
-export interface PlatformStatus {
-  role: PlatformRole;
-  enabled: boolean;
-  message: string | null;
-  disabled_since: string | null;
-}
-
 export type PaymentStatus = "pending" | "approved" | "rejected";
 export type DisputeStatus = "pending" | "resolved" | "dismissed";
 

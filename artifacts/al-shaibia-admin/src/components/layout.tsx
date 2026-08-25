@@ -13,7 +13,6 @@ import {
   CalendarX,
   MessageSquare,
   ScrollText,
-  Power,
   ClipboardList,
   ChevronRight,
   ChevronLeft,
@@ -41,7 +40,6 @@ const NAV_ITEMS = [
   { href: "/disputes",        label: "النزاعات",             icon: AlertTriangle   },
   { href: "/support",         label: "خدمة العملاء",         icon: MessageSquare   },
   { href: "/audit-log",       label: "سجل الإجراءات",        icon: ScrollText      },
-  { href: "/platform-status", label: "حالة التطبيق",          icon: Power           },
   { href: "/suspension-requests", label: "طلبات التعليق",       icon: ClipboardList  },
 ] as const;
 

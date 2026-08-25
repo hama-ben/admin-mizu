@@ -23,7 +23,6 @@ import BannedDriversPage from "@/pages/banned-drivers";
 import ExpiredAccountsPage from "@/pages/expired-accounts";
 import SupportChatPage from "@/pages/support-chat";
 import AuditLogPage from "@/pages/audit-log";
-import PlatformStatusPage from "@/pages/platform-status";
 import SuspensionRequestsPage from "@/pages/suspension-requests";
 
 const queryClient = new QueryClient();
@@ -45,7 +44,6 @@ function Router() {
         <Route path="/banned-drivers" component={BannedDriversPage} />
         <Route path="/expired-accounts" component={ExpiredAccountsPage} />
         <Route path="/audit-log" component={AuditLogPage} />
-        <Route path="/platform-status" component={PlatformStatusPage} />
         <Route path="/suspension-requests" component={SuspensionRequestsPage} />
         <Route component={NotFound} />
       </Switch>
