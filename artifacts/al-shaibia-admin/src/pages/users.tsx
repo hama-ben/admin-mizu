@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { supabase, USER_TYPE_DRIVER, USER_TYPE_CONSUMER, type User } from "@/lib/supabase";
+import type { DriverDetails } from "@/lib/supabase";
 import { authedFetch } from "@/lib/api";
 import { ALGERIAN_WILAYAS, formatDZD, formatDate } from "@/lib/constants";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,7 @@ import {
 import {
   ChevronLeft, ChevronRight, Search, User as UserIcon, MessageSquare, ShieldBan,
   ShieldAlert, ShieldCheck, Package, Star, Wallet, Clock, MapPin, Phone, Mail,
+  Image as ImageIcon,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAutoRefresh } from "@/hooks/use-auto-refresh";
@@ -67,6 +69,7 @@ export default function UsersPage() {
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [driverStats, setDriverStats] = useState<DriverStats | null>(null);
+  const [driverDetails, setDriverDetails] = useState<DriverDetails | null>(null);
   const [consumerStats, setConsumerStats] = useState<ConsumerStats | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{ user: User; action: "suspend" | "ban" | "unsuspend" | "unban" } | null>(null);
@@ -118,15 +121,19 @@ export default function UsersPage() {
     setProfileUser(user);
     setProfileLoading(true);
     setDriverStats(null);
+    setDriverDetails(null);
     setConsumerStats(null);
     try {
       if (user.user_type === USER_TYPE_DRIVER) {
-        const [{ count: totalOrders }, { count: completedOrders }, { data: revenueRows }, { data: ratingRows }] = await Promise.all([
+        const [{ count: totalOrders }, { count: completedOrders }, { data: revenueRows }, { data: ratingRows }, { data: details, error: detailsError }] = await Promise.all([
           supabase.from("orders").select("*", { count: "exact", head: true }).eq("driver_id", user.id),
           supabase.from("orders").select("*", { count: "exact", head: true }).eq("driver_id", user.id).eq("status", "تم التوصيل"),
           supabase.from("orders").select("total_price").eq("driver_id", user.id).eq("status", "تم التوصيل"),
           supabase.from("ratings").select("stars").eq("rated_user_id", user.id),
+          supabase.from("driver_details").select("*").eq("driver_id", user.id).maybeSingle(),
         ]);
+        if (detailsError) throw detailsError;
+        setDriverDetails(details as DriverDetails | null);
         const totalEarnings = (revenueRows ?? []).reduce((s, o: any) => s + Number(o.total_price), 0);
         const stars = (ratingRows ?? []).map((r: any) => Number(r.stars)).filter((n) => !Number.isNaN(n));
         const avgRating = stars.length ? stars.reduce((a, b) => a + b, 0) / stars.length : null;
@@ -364,6 +371,29 @@ export default function UsersPage() {
                   )}
                 </div>
 
+                {profileUser.user_type === USER_TYPE_DRIVER && (
+                  <div className="border-t pt-4">
+                    <h4 className="text-sm font-semibold mb-3 text-muted-foreground">وثائق السائق</h4>
+                    {profileLoading ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-32 w-full" />
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <DriverDocument
+                          url={driverDetails?.truck_front_photo_url}
+                          label="صورة الشاحنة"
+                        />
+                        <DriverDocument
+                          url={driverDetails?.driver_license_url}
+                          label="رخصة القيادة"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="border-t pt-4">
                   <h4 className="text-sm font-semibold mb-3 text-muted-foreground">إحصائيات مباشرة</h4>
                   {profileLoading ? (
@@ -433,6 +463,26 @@ function StatBox({ icon: Icon, label, value }: { icon: any; label: string; value
         <p className="text-[11px] text-muted-foreground">{label}</p>
         <p className="text-sm font-semibold">{value}</p>
       </div>
+    </div>
+  );
+}
+
+function DriverDocument({ url, label }: { url?: string | null; label: string }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="h-32 overflow-hidden rounded-md border bg-muted">
+        {url ? (
+          <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full">
+            <img src={url} alt={label} className="h-full w-full object-cover transition-opacity hover:opacity-80" />
+          </a>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+            <ImageIcon className="h-5 w-5 opacity-50" />
+            لا توجد صورة
+          </div>
+        )}
+      </div>
+      <p className="text-center text-xs font-medium text-muted-foreground">{label}</p>
     </div>
   );
 }
