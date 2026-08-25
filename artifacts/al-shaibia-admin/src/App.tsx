@@ -15,6 +15,7 @@ import UsersPage from "@/pages/users";
 import OrdersPage from "@/pages/orders";
 import DriverQueuePage from "@/pages/driver-queue";
 import PaymentsPage from "@/pages/payments";
+import RevenuePage from "@/pages/revenue";
 import AnnouncementsPage from "@/pages/announcements";
 import DisputesPage from "@/pages/disputes";
 import RejectedDriversPage from "@/pages/rejected-drivers";
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/orders" component={OrdersPage} />
         <Route path="/driver-queue" component={DriverQueuePage} />
         <Route path="/payments" component={PaymentsPage} />
+        <Route path="/revenue" component={RevenuePage} />
         <Route path="/announcements" component={AnnouncementsPage} />
         <Route path="/disputes" component={DisputesPage} />
         <Route path="/support" component={SupportChatPage} />

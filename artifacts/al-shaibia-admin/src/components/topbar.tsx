@@ -18,6 +18,7 @@ const BREADCRUMB_MAP: Record<string, { label: string; href?: string }[]> = {
   "/orders":           [{ label: "لوحة التحكم", href: "/" }, { label: "الطلبات" }],
   "/driver-queue":     [{ label: "لوحة التحكم", href: "/" }, { label: "طابور السائقين" }],
   "/payments":         [{ label: "لوحة التحكم", href: "/" }, { label: "المدفوعات" }],
+  "/revenue":          [{ label: "لوحة التحكم", href: "/" }, { label: "إجمالي الإيرادات" }],
   "/announcements":    [{ label: "لوحة التحكم", href: "/" }, { label: "الإعلانات" }],
   "/disputes":         [{ label: "لوحة التحكم", href: "/" }, { label: "النزاعات" }],
   "/support":          [{ label: "لوحة التحكم", href: "/" }, { label: "خدمة العملاء" }],

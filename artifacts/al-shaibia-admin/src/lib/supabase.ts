@@ -88,6 +88,17 @@ export interface SubscriptionPayment {
   reviewed_at?: string | null;
 }
 
+export interface RevenueTransaction {
+  id: string;
+  driver_id: string;
+  transaction_number: string;
+  amount: number;
+  receipt_image?: string | null;
+  created_at: string;
+  approved_at?: string | null;
+  driver?: Pick<User, "id" | "name" | "phone" | "email"> | null;
+}
+
 /** announcements table */
 export interface Announcement {
   id: string;

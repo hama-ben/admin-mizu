@@ -360,6 +360,47 @@ router.get("/payments/summary", async (_req, res) => {
   }
 });
 
+// GET /api/data/revenue
+// Revenue is composed only of payments that have been approved.
+router.get("/revenue", async (_req, res) => {
+  try {
+    const db = adminClient();
+    const PAYMENT_AMOUNT = 1000;
+    const { data: payments, error } = await db
+      .from("subscription_payments")
+      .select("id, driver_id, receipt_image, status, created_at, reviewed_at")
+      .eq("status", "approved")
+      .order("reviewed_at", { ascending: false });
+    if (error) throw error;
+
+    const driverIds = [...new Set((payments ?? []).map((payment: any) => payment.driver_id).filter(Boolean))];
+    const { data: users, error: usersError } = driverIds.length
+      ? await db.from("users").select("id, name, phone, email").in("id", driverIds)
+      : { data: [], error: null };
+    if (usersError) throw usersError;
+
+    const usersById = new Map((users ?? []).map((user: any) => [user.id, user]));
+    const transactions = (payments ?? []).map((payment: any) => ({
+      id: payment.id,
+      driver_id: payment.driver_id,
+      transaction_number: payment.id,
+      amount: PAYMENT_AMOUNT,
+      receipt_image: payment.receipt_image,
+      created_at: payment.created_at,
+      approved_at: payment.reviewed_at,
+      driver: usersById.get(payment.driver_id) ?? null,
+    }));
+
+    res.json({
+      totalRevenue: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+      transactionCount: transactions.length,
+      transactions,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/data/payments/:id/approve
 //
 // Fully atomic: everything runs inside one pg transaction on a single
