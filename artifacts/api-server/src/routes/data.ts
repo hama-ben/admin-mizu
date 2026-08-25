@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import type { PoolClient } from "pg";
+import WebSocket from "ws";
 
 const { Pool } = pg;
 
@@ -22,6 +23,7 @@ const router = Router();
 
 const SUPABASE_URL = "https://aeoyteruvcxqimwusrey.supabase.co";
 const SERVICE_ROLE_KEY = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+const SUPABASE_ANON_KEY = process.env["SUPABASE_ANON_KEY"] ?? process.env["VITE_SUPABASE_ANON_KEY"];
 
 if (!SERVICE_ROLE_KEY) {
   console.error("SUPABASE_SERVICE_ROLE_KEY is not set — data routes will fail");
@@ -31,6 +33,20 @@ function adminClient() {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY not configured");
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
+  });
+}
+
+// Use the public Supabase key to validate a user's access token. The service
+// role client remains reserved for server-side database reads and writes.
+// Keeping these clients separate avoids auth verification failures when the
+// service-role credential is accepted for database access but not for
+// user-token validation.
+function authClient() {
+  const key = SUPABASE_ANON_KEY ?? SERVICE_ROLE_KEY;
+  if (!key) throw new Error("SUPABASE_ANON_KEY is not configured");
+  return createClient(SUPABASE_URL, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    realtime: { transport: WebSocket as any },
   });
 }
 
@@ -50,7 +66,7 @@ router.use(async (req, res, next) => {
   }
 
   try {
-    const { data, error } = await adminClient().auth.getUser(token);
+    const { data, error } = await authClient().auth.getUser(token);
     if (error || !data?.user) {
       res.status(401).json({ error: "Invalid or expired admin session" });
       return;
@@ -74,7 +90,8 @@ router.use(async (req, res, next) => {
     // performed an action (e.g. which admin approved a payment).
     (req as any).adminUser = data.user;
     next();
-  } catch {
+  } catch (error: any) {
+    console.error("[DATA AUTH] Could not verify admin session:", error?.message ?? error);
     res.status(401).json({ error: "Could not verify admin session" });
   }
 });
