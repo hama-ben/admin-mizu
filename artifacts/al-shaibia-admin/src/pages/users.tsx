@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { supabase, USER_TYPE_DRIVER, USER_TYPE_CONSUMER, type User } from "@/lib/supabase";
-import type { DriverDetails } from "@/lib/supabase";
+import {
+  supabase, USER_TYPE_DRIVER, USER_TYPE_CONSUMER,
+  type User, type DriverDetails, type DriverSuspensionRequest,
+} from "@/lib/supabase";
 import { authedFetch } from "@/lib/api";
 import { ALGERIAN_WILAYAS, formatDZD, formatDate } from "@/lib/constants";
 import { Input } from "@/components/ui/input";
@@ -70,6 +72,7 @@ export default function UsersPage() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [driverStats, setDriverStats] = useState<DriverStats | null>(null);
   const [driverDetails, setDriverDetails] = useState<DriverDetails | null>(null);
+  const [driverRequests, setDriverRequests] = useState<DriverSuspensionRequest[]>([]);
   const [consumerStats, setConsumerStats] = useState<ConsumerStats | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{ user: User; action: "suspend" | "ban" | "unsuspend" | "unban" } | null>(null);
@@ -122,18 +125,22 @@ export default function UsersPage() {
     setProfileLoading(true);
     setDriverStats(null);
     setDriverDetails(null);
+    setDriverRequests([]);
     setConsumerStats(null);
     try {
       if (user.user_type === USER_TYPE_DRIVER) {
-        const [{ count: totalOrders }, { count: completedOrders }, { data: revenueRows }, { data: ratingRows }, { data: details, error: detailsError }] = await Promise.all([
+        const [{ count: totalOrders }, { count: completedOrders }, { data: revenueRows }, { data: ratingRows }, { data: details, error: detailsError }, { data: suspensionRequests, error: requestsError }] = await Promise.all([
           supabase.from("orders").select("*", { count: "exact", head: true }).eq("driver_id", user.id),
           supabase.from("orders").select("*", { count: "exact", head: true }).eq("driver_id", user.id).eq("status", "تم التوصيل"),
           supabase.from("orders").select("total_price").eq("driver_id", user.id).eq("status", "تم التوصيل"),
           supabase.from("ratings").select("stars").eq("rated_user_id", user.id),
           supabase.from("driver_details").select("*").eq("driver_id", user.id).maybeSingle(),
+          supabase.from("driver_suspension_requests").select("*").eq("driver_id", user.id).order("created_at", { ascending: false }),
         ]);
         if (detailsError) throw detailsError;
+        if (requestsError) throw requestsError;
         setDriverDetails(details as DriverDetails | null);
+        setDriverRequests((suspensionRequests ?? []) as DriverSuspensionRequest[]);
         const totalEarnings = (revenueRows ?? []).reduce((s, o: any) => s + Number(o.total_price), 0);
         const stars = (ratingRows ?? []).map((r: any) => Number(r.stars)).filter((n) => !Number.isNaN(n));
         const avgRating = stars.length ? stars.reduce((a, b) => a + b, 0) / stars.length : null;
@@ -391,6 +398,44 @@ export default function UsersPage() {
                         />
                       </div>
                     )}
+                  </div>
+                )}
+
+                {profileUser.user_type === USER_TYPE_DRIVER && driverRequests.length > 0 && (
+                  <div className="border-t pt-4">
+                    <h4 className="text-sm font-semibold mb-3 text-muted-foreground">طلبات تعليق الحساب</h4>
+                    <div className="space-y-2">
+                      {driverRequests.map((request) => (
+                        <div key={request.id} className="rounded-md border border-orange-500/20 bg-orange-500/5 p-3 text-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium">
+                              {request.request_type === "suspend" ? "طلب تعليق الحساب" : "طلب إلغاء التعليق"}
+                            </span>
+                            <Badge variant="outline" className={request.status === "approved"
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                              : request.status === "rejected"
+                                ? "border-red-500/30 bg-red-500/10 text-red-400"
+                                : "border-amber-500/30 bg-amber-500/10 text-amber-400"}>
+                              {request.status === "approved" ? "تمت الموافقة" : request.status === "rejected" ? "مرفوض" : "قيد المراجعة"}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            السبب: {request.reason === "other" && request.reason_text
+                              ? request.reason_text
+                              : request.reason === "truck_issue"
+                                ? "مشكلة في الشاحنة"
+                                : request.reason === "medical"
+                                  ? "سبب مرضي"
+                                  : request.reason === "personal_leave"
+                                    ? "عطلة شخصية"
+                                    : "سبب آخر"}
+                          </p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {formatDate(request.created_at)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

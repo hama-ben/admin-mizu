@@ -99,6 +99,7 @@ export default function SuspensionRequestsPage() {
   const [requests, setRequests] = useState<DriverSuspensionRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const { toast } = useToast();
 
   async function loadRequests(background = false) {
@@ -136,8 +137,9 @@ export default function SuspensionRequestsPage() {
     setActionLoading(request.id);
     try {
       await api.post(`/suspension-requests/${request.id}/lift`);
+      setRequests((current) => current.filter((item) => item.id !== request.id));
+      setSuccessMessage(`تم إلغاء تعليق حساب السائق ${driverName} بنجاح. تم تفعيل الحساب وحفظ الطلب السابق في ملفه الشخصي.`);
       toast({ title: "تم إلغاء تعليق الحساب", description: `تم تفعيل حساب ${driverName} مرة أخرى.` });
-      await loadRequests(true);
     } catch (error: any) {
       toast({ title: "فشل إلغاء التعليق", description: error.message, variant: "destructive" });
     } finally {
@@ -157,6 +159,18 @@ export default function SuspensionRequestsPage() {
         </div>
         <Button variant="outline" onClick={() => loadRequests()} disabled={loading} className="gap-2"><RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> تحديث</Button>
       </div>
+
+      {successMessage && (
+        <Card className="border-emerald-500/40 bg-emerald-500/10">
+          <CardContent className="flex items-start gap-3 p-4 text-emerald-400">
+            <Check className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">تم إلغاء تعليق حساب السائق</p>
+              <p className="mt-1 text-sm text-emerald-300/90">{successMessage}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <section className="space-y-4">
         <div className="flex items-center gap-2"><h2 className="text-xl font-semibold">الطلبات المعلّقة</h2><Badge>{pending.length}</Badge></div>
