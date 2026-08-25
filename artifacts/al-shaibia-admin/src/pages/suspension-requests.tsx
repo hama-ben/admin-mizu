@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ClipboardList, Clock, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, ClipboardList, Clock, Loader2, RefreshCw, Unlock, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,13 +25,16 @@ function reasonLabel(request: DriverSuspensionRequest) {
 function RequestCard({
   request,
   onDecision,
+  onLift,
   actionLoading,
 }: {
   request: DriverSuspensionRequest;
   onDecision: (request: DriverSuspensionRequest, status: "approved" | "rejected") => void;
+  onLift: (request: DriverSuspensionRequest) => void;
   actionLoading: string | null;
 }) {
   const pending = request.status === "pending";
+  const canLift = request.status === "approved" && request.request_type === "suspend";
   const driverName = request.driver?.name || request.driver_id;
   return (
     <Card className={pending ? "border-amber-500/40 bg-amber-500/[0.03]" : ""}>
@@ -64,6 +67,19 @@ function RequestCard({
           <p className="text-xs text-muted-foreground">السبب</p>
           <p className="mt-1 text-sm leading-relaxed">{reasonLabel(request)}</p>
         </div>
+        {!pending && canLift && (
+          <div className="mt-4 flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => onLift(request)}
+              disabled={actionLoading === request.id}
+              className="gap-2 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+            >
+              {actionLoading === request.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlock className="h-4 w-4" />}
+              إلغاء تعليق الحساب
+            </Button>
+          </div>
+        )}
         {pending && (
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => onDecision(request, "rejected")} disabled={actionLoading === request.id} className="gap-2 text-red-400">
@@ -113,6 +129,22 @@ export default function SuspensionRequestsPage() {
     }
   }
 
+  async function lift(request: DriverSuspensionRequest) {
+    const driverName = request.driver?.name || request.driver_id;
+    if (!window.confirm(`هل تريد إلغاء تعليق حساب ${driverName}؟`)) return;
+
+    setActionLoading(request.id);
+    try {
+      await api.post(`/suspension-requests/${request.id}/lift`);
+      toast({ title: "تم إلغاء تعليق الحساب", description: `تم تفعيل حساب ${driverName} مرة أخرى.` });
+      await loadRequests(true);
+    } catch (error: any) {
+      toast({ title: "فشل إلغاء التعليق", description: error.message, variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   const pending = useMemo(() => requests.filter((request) => request.status === "pending"), [requests]);
   const history = useMemo(() => requests.filter((request) => request.status !== "pending"), [requests]);
 
@@ -130,13 +162,13 @@ export default function SuspensionRequestsPage() {
         <div className="flex items-center gap-2"><h2 className="text-xl font-semibold">الطلبات المعلّقة</h2><Badge>{pending.length}</Badge></div>
         {loading ? <div className="space-y-4">{[1, 2].map((item) => <Card key={item}><CardContent className="space-y-3 p-5"><Skeleton className="h-6 w-1/2" /><Skeleton className="h-12 w-full" /></CardContent></Card>)}</div>
           : pending.length === 0 ? <Card><CardContent className="py-12 text-center text-muted-foreground">لا توجد طلبات معلّقة حالياً.</CardContent></Card>
-          : <div className="space-y-4">{pending.map((request) => <RequestCard key={request.id} request={request} onDecision={decide} actionLoading={actionLoading} />)}</div>}
+           : <div className="space-y-4">{pending.map((request) => <RequestCard key={request.id} request={request} onDecision={decide} onLift={lift} actionLoading={actionLoading} />)}</div>}
       </section>
 
       <section className="space-y-4">
         <CardHeader className="px-0"><CardTitle className="text-xl">السجل التاريخي</CardTitle></CardHeader>
         {history.length === 0 ? <Card><CardContent className="py-10 text-center text-muted-foreground">لا توجد طلبات منتهية بعد.</CardContent></Card>
-          : <div className="space-y-4">{history.map((request) => <RequestCard key={request.id} request={request} onDecision={decide} actionLoading={actionLoading} />)}</div>}
+           : <div className="space-y-4">{history.map((request) => <RequestCard key={request.id} request={request} onDecision={decide} onLift={lift} actionLoading={actionLoading} />)}</div>}
       </section>
     </div>
   );

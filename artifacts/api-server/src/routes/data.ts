@@ -1200,4 +1200,63 @@ router.post("/suspension-requests/:id/decision", async (req, res) => {
   }
 });
 
+// Manually lift a driver's suspension from an approved suspension record.
+// The historical request remains intact; only the driver's current state changes.
+router.post("/suspension-requests/:id/lift", async (req, res) => {
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const requestResult = await client.query<{
+      id: string;
+      driver_id: string;
+      request_type: "suspend" | "lift";
+      status: string;
+    }>(
+      `SELECT id, driver_id, request_type, status
+       FROM public.driver_suspension_requests
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    const request = requestResult.rows[0];
+    if (!request) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Suspension request not found" });
+      return;
+    }
+    if (request.request_type !== "suspend" || request.status !== "approved") {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Only an approved suspension can be lifted" });
+      return;
+    }
+
+    const updateResult = await client.query(
+      `UPDATE public.driver_details
+       SET is_suspended = false, suspension_reason = NULL
+       WHERE driver_id = $1`,
+      [request.driver_id],
+    );
+    if ((updateResult.rowCount ?? 0) !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Driver details not found" });
+      return;
+    }
+
+    await client.query("COMMIT");
+    await logAdminAction(req, "lift_suspension", "driver", request.driver_id, {
+      requestId: request.id,
+      source: "suspension_request_history",
+    });
+    res.json({ ok: true, driverId: request.driver_id });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[SUSPENSION LIFT] FAILED", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
+  }
+});
+
 export default router;
