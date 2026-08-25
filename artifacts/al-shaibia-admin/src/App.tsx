@@ -30,26 +30,24 @@ const queryClient = new QueryClient();
 
 function Router() {
   return (
-    <AppLayout>
-      <Switch>
-        <Route path="/" component={DashboardPage} />
-        <Route path="/users" component={UsersPage} />
-        <Route path="/orders" component={OrdersPage} />
-        <Route path="/driver-queue" component={DriverQueuePage} />
-        <Route path="/payments" component={PaymentsPage} />
-        <Route path="/revenue" component={RevenuePage} />
-        <Route path="/announcements" component={AnnouncementsPage} />
-        <Route path="/disputes" component={DisputesPage} />
-        <Route path="/support" component={SupportChatPage} />
-        <Route path="/rejected-drivers" component={RejectedDriversPage} />
-        <Route path="/suspended-drivers" component={SuspendedDriversPage} />
-        <Route path="/banned-drivers" component={BannedDriversPage} />
-        <Route path="/expired-accounts" component={ExpiredAccountsPage} />
-        <Route path="/audit-log" component={AuditLogPage} />
-        <Route path="/suspension-requests" component={SuspensionRequestsPage} />
-        <Route component={NotFound} />
-      </Switch>
-    </AppLayout>
+    <Switch>
+      <Route path="/" component={DashboardPage} />
+      <Route path="/users" component={UsersPage} />
+      <Route path="/orders" component={OrdersPage} />
+      <Route path="/driver-queue" component={DriverQueuePage} />
+      <Route path="/payments" component={PaymentsPage} />
+      <Route path="/revenue" component={RevenuePage} />
+      <Route path="/announcements" component={AnnouncementsPage} />
+      <Route path="/disputes" component={DisputesPage} />
+      <Route path="/support" component={SupportChatPage} />
+      <Route path="/rejected-drivers" component={RejectedDriversPage} />
+      <Route path="/suspended-drivers" component={SuspendedDriversPage} />
+      <Route path="/banned-drivers" component={BannedDriversPage} />
+      <Route path="/expired-accounts" component={ExpiredAccountsPage} />
+      <Route path="/audit-log" component={AuditLogPage} />
+      <Route path="/suspension-requests" component={SuspensionRequestsPage} />
+      <Route component={NotFound} />
+    </Switch>
   );
 }
 
@@ -113,7 +111,11 @@ function AuthGate() {
     return <LoginPage errorMessage={rejectedMessage} />;
   }
 
-  return <Router />;
+  return (
+    <AppLayout>
+      <Router />
+    </AppLayout>
+  );
 }
 
 function App() {
