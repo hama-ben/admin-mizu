@@ -1,3 +1,4 @@
 - [Al-Shaibia auth architecture](al-shaibia-auth.md) — Replit Auth replaces Supabase auth; Supabase client kept for data queries only; API server on 3001, Vite on 5000.
 - [Derived-list conversations vs. deep links](support-chat-derived-lists.md) — grouping-based lists silently drop targets with zero rows; deep links to them need a synthesized placeholder entry.
 - [Supabase Realtime channel names](supabase-realtime-channel-names.md) — every mounted listener instance needs a unique channel name when the client reuses channels by topic.
+- [Coupon cost source](coupon-cost-source.md) — coupons stores percentage/cap/timestamps but no applied amount or valid payment relation for exact savings.
