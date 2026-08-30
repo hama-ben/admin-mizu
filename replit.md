@@ -4,10 +4,13 @@ An admin dashboard for managing users, drivers, orders, payments, announcements,
 
 ## Run & Operate
 
+- `pnpm install --frozen-lockfile` — install the workspace dependencies
+- `bash scripts/start-dev.sh` — start the frontend preview on port 5000 and API on port 3001
 - `PORT=5000 BASE_PATH=/ API_PORT=3001 pnpm --filter @workspace/al-shaibia-admin run dev` — run the frontend (port 5000, webview)
 - `PORT=3001 pnpm --filter @workspace/api-server run dev` — run the API server (port 3001)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
+- API health check: `GET /api/healthz`
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string (auto-provisioned)
