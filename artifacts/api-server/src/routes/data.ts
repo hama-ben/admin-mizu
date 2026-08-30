@@ -1317,4 +1317,184 @@ router.post("/suspension-requests/:id/lift", async (req, res) => {
   }
 });
 
+// ── Referral reward review ───────────────────────────────────────────────────
+// The shared Mizu schema uses announcements targeted at a user as the
+// existing in-app notification mechanism. The notification insert below is
+// deliberately part of the same transaction as the reward grant.
+router.get("/referral-rewards", async (_req, res) => {
+  try {
+    const result = await getSupabasePool().query<{
+      id: string;
+      driver_id: string;
+      threshold_reached: number;
+      reached_at: string;
+      reward_granted: boolean;
+      granted_at: string | null;
+      granted_by: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      driver_wilaya: string | null;
+      driver_commune: string | null;
+      granted_by_email: string | null;
+    }>(
+      `SELECT
+         r.id,
+         r.driver_id,
+         r.threshold_reached,
+         r.reached_at,
+         r.reward_granted,
+         r.granted_at,
+         r.granted_by,
+         u.name AS driver_name,
+         u.phone AS driver_phone,
+         u.wilaya AS driver_wilaya,
+         u.commune AS driver_commune,
+         au.email AS granted_by_email
+       FROM public.referral_rewards_pending_admin r
+       LEFT JOIN public.users u ON u.id = r.driver_id
+       LEFT JOIN public.admin_users au ON au.user_id::text = r.granted_by
+       ORDER BY r.reward_granted ASC,
+                COALESCE(r.granted_at, r.reached_at) DESC`,
+    );
+
+    const entries = result.rows.map((row) => ({
+      id: row.id,
+      driverId: row.driver_id,
+      thresholdReached: row.threshold_reached,
+      reachedAt: row.reached_at,
+      rewardGranted: row.reward_granted,
+      grantedAt: row.granted_at,
+      grantedBy: row.granted_by,
+      grantedByEmail: row.granted_by_email,
+      driver: {
+        id: row.driver_id,
+        name: row.driver_name,
+        phone: row.driver_phone,
+        wilaya: row.driver_wilaya,
+        commune: row.driver_commune,
+      },
+    }));
+
+    res.json({
+      pending: entries.filter((entry) => !entry.rewardGranted),
+      history: entries.filter((entry) => entry.rewardGranted),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/referral-rewards/pending-count", async (_req, res) => {
+  try {
+    const result = await getSupabasePool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM public.referral_rewards_pending_admin
+       WHERE reward_granted = false`,
+    );
+    res.json({ count: result.rows[0]?.count ?? 0 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/referral-rewards/:id/grant", async (req, res) => {
+  const { id } = req.params;
+  const adminId = (req as any).adminUser?.id;
+  let client: PoolClient | null = null;
+
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const rewardResult = await client.query<{
+      id: string;
+      driver_id: string;
+      threshold_reached: number;
+      reward_granted: boolean;
+    }>(
+      `SELECT id, driver_id, threshold_reached, reward_granted
+       FROM public.referral_rewards_pending_admin
+       WHERE id = $1
+       FOR UPDATE`,
+      [id],
+    );
+    const reward = rewardResult.rows[0];
+
+    if (!reward) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Referral reward not found" });
+      return;
+    }
+    if (reward.reward_granted) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "This referral reward was already granted" });
+      return;
+    }
+
+    const driverResult = await client.query<{ id: string }>(
+      `SELECT id
+       FROM public.users
+       WHERE id = $1
+       FOR UPDATE`,
+      [reward.driver_id],
+    );
+    if (!driverResult.rows[0]) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Driver not found" });
+      return;
+    }
+
+    const userUpdate = await client.query<{ subscription_expires_at: string }>(
+      `UPDATE public.users
+       SET subscription_expires_at = GREATEST(
+         COALESCE(subscription_expires_at, NOW()),
+         NOW()
+       ) + INTERVAL '30 days'
+       WHERE id = $1
+       RETURNING subscription_expires_at`,
+      [reward.driver_id],
+    );
+
+    const pendingUpdate = await client.query(
+      `UPDATE public.referral_rewards_pending_admin
+       SET reward_granted = true,
+           granted_at = NOW(),
+           granted_by = $2
+       WHERE id = $1
+         AND reward_granted = false`,
+      [id, adminId ?? null],
+    );
+    if ((pendingUpdate.rowCount ?? 0) !== 1) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "This referral reward changed concurrently — please retry" });
+      return;
+    }
+
+    const notificationText = "مبروك! حصلت على شهر مجاني مقابل دعوتك 10 سائقين";
+    await client.query(
+      `INSERT INTO public.announcements
+         (title, content, target_audience, badge_text, is_active)
+       VALUES ($1, $2, $3, $4, true)`,
+      ["مكافأة الإحالة", notificationText, reward.driver_id, "Success"],
+    );
+
+    await client.query("COMMIT");
+
+    const newExpiry = userUpdate.rows[0]?.subscription_expires_at ?? null;
+    await logAdminAction(req, "grant", "referral_reward", id, {
+      driverId: reward.driver_id,
+      thresholdReached: reward.threshold_reached,
+      newExpiry,
+    });
+
+    res.json({ ok: true, driverId: reward.driver_id, newExpiry });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[REFERRAL REWARD] FAILED", "| reward_id:", id, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
+  }
+});
+
 export default router;

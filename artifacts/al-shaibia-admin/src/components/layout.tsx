@@ -15,6 +15,7 @@ import {
   MessageSquare,
   ScrollText,
   ClipboardList,
+  Gift,
   ChevronRight,
   ChevronLeft,
   X,
@@ -24,6 +25,7 @@ import { usePendingDisputeCount } from "@/hooks/use-pending-disputes";
 import { useDriverCounts } from "@/hooks/use-driver-counts";
 import { useSupportUnreadCount } from "@/hooks/use-support-unread";
 import { useSuspensionRequestCount } from "@/hooks/use-suspension-request-count";
+import { usePendingReferralRewardCount } from "@/hooks/use-pending-referral-rewards";
 import { SidebarContext, useSidebar } from "./sidebar-context";
 import { Topbar } from "./topbar";
 
@@ -43,6 +45,7 @@ const NAV_ITEMS = [
   { href: "/support",         label: "خدمة العملاء",         icon: MessageSquare   },
   { href: "/audit-log",       label: "سجل الإجراءات",        icon: ScrollText      },
   { href: "/suspension-requests", label: "طلبات التعليق",       icon: ClipboardList  },
+  { href: "/referral-rewards", label: "نظام الإحالات",          icon: Gift           },
 ] as const;
 
 function SidebarContent({ collapsed }: { collapsed: boolean }) {
@@ -51,6 +54,7 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
   const driverCounts = useDriverCounts();
   const supportUnread = useSupportUnreadCount();
   const suspensionRequests = useSuspensionRequestCount();
+  const referralRewards = usePendingReferralRewardCount();
   const { toggleCollapsed, setMobileOpen } = useSidebar();
 
   const BADGES: Partial<Record<string, number>> = {
@@ -62,6 +66,7 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
     "/disputes":         pendingDisputes         > 0 ? pendingDisputes         : undefined,
     "/support":          supportUnread           > 0 ? supportUnread           : undefined,
     "/suspension-requests": suspensionRequests > 0 ? suspensionRequests : undefined,
+    "/referral-rewards": referralRewards > 0 ? referralRewards : undefined,
   };
 
   return (
