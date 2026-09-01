@@ -5,9 +5,10 @@ import { formatDZD } from "@/lib/constants";
 import {
   Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
 } from "recharts";
-import { Users, Truck, Package, CreditCard, Activity, Clock, RefreshCw } from "lucide-react";
+import { Users, Truck, Package, CreditCard, Activity, Clock, RefreshCw, Gift } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAutoRefresh } from "@/hooks/use-auto-refresh";
+import { api } from "@/lib/api";
 
 interface Stats {
   totalDrivers: number;
@@ -16,6 +17,7 @@ interface Stats {
   totalConsumers: number;
   ordersCompleted: number;
   totalRevenue: number;
+  referralWheelCost: number;
 }
 
 async function safeCount(query: any): Promise<number> {
@@ -40,12 +42,14 @@ async function loadDashboardData(): Promise<{ stats: Stats; chartData: ChartPoin
     activeDrivers,
     totalConsumers,
     ordersCompleted,
+    referralWheelCostResult,
   ] = await Promise.all([
     safeCount(supabase.from("users").select("*", { count: "exact", head: true }).eq("user_type", USER_TYPE_DRIVER)),
     safeCount(supabase.from("users").select("*", { count: "exact", head: true }).eq("user_type", USER_TYPE_DRIVER).eq("account_status", "pending")),
     safeCount(supabase.from("driver_status").select("*", { count: "exact", head: true }).eq("current_status", "online")),
     safeCount(supabase.from("users").select("*", { count: "exact", head: true }).eq("user_type", USER_TYPE_CONSUMER)),
     safeCount(supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "تم التوصيل")),
+    api.get<{ monthlyCostDzd: number }>("/incentives/monthly-cost"),
   ]);
 
   const { data: completedOrders } = await supabase
@@ -76,7 +80,18 @@ async function loadDashboardData(): Promise<{ stats: Stats; chartData: ChartPoin
 
   const chartData = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 
-  return { stats: { totalDrivers, activeDrivers, pendingVerifications, totalConsumers, ordersCompleted, totalRevenue }, chartData };
+  return {
+    stats: {
+      totalDrivers,
+      activeDrivers,
+      pendingVerifications,
+      totalConsumers,
+      ordersCompleted,
+      totalRevenue,
+      referralWheelCost: referralWheelCostResult.monthlyCostDzd ?? 0,
+    },
+    chartData,
+  };
 }
 
 const METRIC_LABELS: Record<ChartMetric, string> = {
@@ -163,6 +178,7 @@ export default function DashboardPage() {
       ) : stats ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <StatCard title="إجمالي الإيرادات" value={formatDZD(stats.totalRevenue ?? 0)} icon={CreditCard} />
+          <StatCard title="تكلفة نظام الإحالة والعجلة هذا الشهر" value={formatDZD(stats.referralWheelCost ?? 0)} icon={Gift} valueClass="text-amber-500" />
           <StatCard title="السائقون النشطون" value={String(stats.activeDrivers ?? 0)} icon={Activity} />
           <StatCard title="بانتظار المراجعة" value={String(stats.pendingVerifications ?? 0)} icon={Clock} valueClass="text-amber-500" />
           <StatCard title="الطلبات المكتملة" value={String(stats.ordersCompleted ?? 0)} icon={Package} />

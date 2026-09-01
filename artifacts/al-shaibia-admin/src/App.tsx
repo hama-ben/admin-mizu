@@ -26,6 +26,7 @@ import SupportChatPage from "@/pages/support-chat";
 import AuditLogPage from "@/pages/audit-log";
 import SuspensionRequestsPage from "@/pages/suspension-requests";
 import ReferralRewardsPage from "@/pages/referral-rewards";
+import IncentivesPage from "@/pages/incentives";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ function Router() {
       <Route path="/audit-log" component={AuditLogPage} />
       <Route path="/suspension-requests" component={SuspensionRequestsPage} />
       <Route path="/referral-rewards" component={ReferralRewardsPage} />
+      <Route path="/incentives" component={IncentivesPage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -1497,4 +1497,290 @@ router.post("/referral-rewards/:id/grant", async (req, res) => {
   }
 });
 
+// ── Wheel spins and coupon cost tracking ─────────────────────────────────────
+const DESIGNED_WHEEL_DISTRIBUTION = [
+  { key: "100", resultPercentage: 100, label: "خصم 100%", designedPercentage: 2 },
+  { key: "75", resultPercentage: 75, label: "خصم 75%", designedPercentage: 5 },
+  { key: "50", resultPercentage: 50, label: "خصم 50%", designedPercentage: 13 },
+  { key: "25", resultPercentage: 25, label: "خصم 25%", designedPercentage: 25 },
+  { key: "10", resultPercentage: 10, label: "خصم 10%", designedPercentage: 35 },
+  { key: "reroll", resultPercentage: null, label: "إعادة لفة", designedPercentage: 20 },
+] as const;
+
+const COUPON_DISCOUNT_PERCENTAGES = [100, 75, 50, 25, 10] as const;
+const COUPON_STATUS_VALUES = ["pending_activation", "active", "used", "expired"] as const;
+type CouponStatus = (typeof COUPON_STATUS_VALUES)[number];
+type MonthlyCouponBreakdown = {
+  discountPercentage: number | null;
+  amountDzd: number;
+  usedCount: number;
+  missingAppliedAmountCount: number;
+  capDzd: number | null;
+};
+type WheelDistributionRow = {
+  key: string;
+  resultPercentage: number | null;
+  label: string;
+  designedPercentage: number;
+  actualCount: number;
+  actualPercentage: number;
+  deltaPercentage: number;
+};
+
+const APPLIED_COUPON_COST_SQL = `CASE
+  WHEN discount_percentage = 75 THEN LEAST(COALESCE(applied_amount_dzd, 0), 750)
+  WHEN discount_percentage = 50 THEN LEAST(COALESCE(applied_amount_dzd, 0), 500)
+  ELSE COALESCE(applied_amount_dzd, 0)
+END`;
+
+const COUPON_STATUS_SQL = `CASE
+  WHEN c.used_at IS NOT NULL THEN 'used'
+  WHEN c.expires_at IS NOT NULL AND c.expires_at <= NOW() THEN 'expired'
+  WHEN c.activation_trigger_at IS NULL OR c.activation_trigger_at > NOW() THEN 'pending_activation'
+  ELSE 'active'
+END`;
+
+async function getMonthlyCouponCost() {
+  const result = await getSupabasePool().query<{
+    total_cost: number;
+    used_count: number;
+    missing_amount_count: number;
+  }>(
+    `SELECT
+       COALESCE(SUM(${APPLIED_COUPON_COST_SQL}), 0)::int AS total_cost,
+       COUNT(*)::int AS used_count,
+       COUNT(*) FILTER (WHERE applied_amount_dzd IS NULL)::int AS missing_amount_count
+     FROM public.coupons
+     WHERE used_at IS NOT NULL
+       AND used_at >= date_trunc('month', NOW())`,
+  );
+
+  const breakdown = await getSupabasePool().query<{
+    discount_percentage: number | null;
+    total_cost: number;
+    used_count: number;
+    missing_amount_count: number;
+  }>(
+    `SELECT
+       discount_percentage,
+       COALESCE(SUM(${APPLIED_COUPON_COST_SQL}), 0)::int AS total_cost,
+       COUNT(*)::int AS used_count,
+       COUNT(*) FILTER (WHERE applied_amount_dzd IS NULL)::int AS missing_amount_count
+     FROM public.coupons
+     WHERE used_at IS NOT NULL
+       AND used_at >= date_trunc('month', NOW())
+     GROUP BY discount_percentage`,
+  );
+
+  const grouped = new Map(
+    breakdown.rows.map((row) => [
+      row.discount_percentage === null ? "unknown" : String(row.discount_percentage),
+      row,
+    ]),
+  );
+
+  const byPercentage: MonthlyCouponBreakdown[] = COUPON_DISCOUNT_PERCENTAGES.map((percentage) => {
+    const row = grouped.get(String(percentage));
+    return {
+      discountPercentage: percentage,
+      amountDzd: row?.total_cost ?? 0,
+      usedCount: row?.used_count ?? 0,
+      missingAppliedAmountCount: row?.missing_amount_count ?? 0,
+      capDzd: percentage === 75 ? 750 : percentage === 50 ? 500 : null,
+    };
+  });
+  const unknown = grouped.get("unknown");
+  if (unknown) {
+    byPercentage.push({
+      discountPercentage: null,
+      amountDzd: unknown.total_cost,
+      usedCount: unknown.used_count,
+      missingAppliedAmountCount: unknown.missing_amount_count,
+      capDzd: null,
+    });
+  }
+
+  return {
+    monthlyCostDzd: result.rows[0]?.total_cost ?? 0,
+    monthlyUsedCoupons: result.rows[0]?.used_count ?? 0,
+    missingAppliedAmountCount: result.rows[0]?.missing_amount_count ?? 0,
+    byPercentage,
+  };
+}
+
+router.get("/incentives/monthly-cost", async (_req, res) => {
+  try {
+    res.json(await getMonthlyCouponCost());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incentives/summary", async (_req, res) => {
+  try {
+    const [spinResult, cost] = await Promise.all([
+      getSupabasePool().query<{
+        result_percentage: number | null;
+        spin_count: number;
+      }>(
+        `SELECT result_percentage, COUNT(*)::int AS spin_count
+         FROM public.wheel_spins
+         GROUP BY result_percentage`,
+      ),
+      getMonthlyCouponCost(),
+    ]);
+
+    const countByKey = new Map(
+      spinResult.rows.map((row) => [
+        row.result_percentage === null ? "reroll" : String(row.result_percentage),
+        row.spin_count,
+      ]),
+    );
+    const totalSpins = spinResult.rows.reduce((sum, row) => sum + row.spin_count, 0);
+    const distribution: WheelDistributionRow[] = DESIGNED_WHEEL_DISTRIBUTION.map((item) => {
+      const actualCount = countByKey.get(item.key) ?? 0;
+      return {
+        ...item,
+        actualCount,
+        actualPercentage: totalSpins > 0
+          ? Number(((actualCount / totalSpins) * 100).toFixed(1))
+          : 0,
+        deltaPercentage: totalSpins > 0
+          ? Number((((actualCount / totalSpins) * 100) - item.designedPercentage).toFixed(1))
+          : -item.designedPercentage,
+      };
+    });
+
+    const knownKeys = new Set<string>(DESIGNED_WHEEL_DISTRIBUTION.map((item) => item.key));
+    for (const row of spinResult.rows) {
+      const key = row.result_percentage === null ? "reroll" : String(row.result_percentage);
+      if (!knownKeys.has(key)) {
+        distribution.push({
+          key,
+          resultPercentage: row.result_percentage,
+          label: row.result_percentage === null ? "إعادة لفة" : `خصم ${row.result_percentage}%`,
+          designedPercentage: 0,
+          actualCount: row.spin_count,
+          actualPercentage: totalSpins > 0
+            ? Number(((row.spin_count / totalSpins) * 100).toFixed(1))
+            : 0,
+          deltaPercentage: totalSpins > 0
+            ? Number(((row.spin_count / totalSpins) * 100).toFixed(1))
+            : 0,
+        });
+      }
+    }
+
+    res.json({ totalSpins, distribution, couponCost: cost });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incentives/coupons", async (req, res) => {
+  try {
+    const query = req.query as Record<string, string | undefined>;
+    const search = query.search?.trim() ?? "";
+    const status = query.status && query.status !== "all" ? query.status as CouponStatus : null;
+    const discount = query.discount && query.discount !== "all" ? Number(query.discount) : null;
+    const page = Math.max(0, Number.parseInt(query.page ?? "0", 10) || 0);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize ?? "25", 10) || 25));
+
+    if (status && !COUPON_STATUS_VALUES.includes(status)) {
+      res.status(400).json({ error: "Invalid coupon status" });
+      return;
+    }
+    if (discount !== null && !COUPON_DISCOUNT_PERCENTAGES.includes(discount as (typeof COUPON_DISCOUNT_PERCENTAGES)[number])) {
+      res.status(400).json({ error: "Invalid coupon discount percentage" });
+      return;
+    }
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const addParam = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+
+    if (search) {
+      const escaped = search.replace(/[\\%_]/g, "\\$&");
+      const placeholder = addParam(`%${escaped}%`);
+      where.push(`(u.name ILIKE ${placeholder} ESCAPE '\\' OR u.phone ILIKE ${placeholder} ESCAPE '\\')`);
+    }
+    if (status) where.push(`${COUPON_STATUS_SQL} = ${addParam(status)}`);
+    if (discount !== null) where.push(`c.discount_percentage = ${addParam(discount)}`);
+
+    const fromSql = `
+      FROM public.coupons c
+      LEFT JOIN public.users u ON u.id = c.user_id
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+    `;
+
+    const countResult = await getSupabasePool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count ${fromSql}`,
+      params,
+    );
+
+    const limitPlaceholder = addParam(pageSize);
+    const offsetPlaceholder = addParam(page * pageSize);
+    const rowsResult = await getSupabasePool().query<{
+      id: string;
+      user_id: string;
+      discount_percentage: number;
+      max_discount_amount: number | null;
+      applied_amount_dzd: number | null;
+      won_at: string;
+      activation_trigger_at: string | null;
+      expires_at: string | null;
+      used_at: string | null;
+      applied_to_payment_id: string | null;
+      coupon_status: CouponStatus;
+      owner_name: string | null;
+      owner_phone: string | null;
+    }>(
+      `SELECT
+         c.id,
+         c.user_id,
+         c.discount_percentage,
+         c.max_discount_amount,
+         c.applied_amount_dzd,
+         c.won_at,
+         c.activation_trigger_at,
+         c.expires_at,
+         c.used_at,
+         c.applied_to_payment_id,
+         ${COUPON_STATUS_SQL} AS coupon_status,
+         u.name AS owner_name,
+         u.phone AS owner_phone
+       ${fromSql}
+       ORDER BY c.won_at DESC
+       LIMIT ${limitPlaceholder}
+       OFFSET ${offsetPlaceholder}`,
+      params,
+    );
+
+    res.json({
+      data: rowsResult.rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        discountPercentage: row.discount_percentage,
+        maxDiscountAmount: row.max_discount_amount,
+        appliedAmountDzd: row.applied_amount_dzd,
+        wonAt: row.won_at,
+        activationTriggerAt: row.activation_trigger_at,
+        expiresAt: row.expires_at,
+        usedAt: row.used_at,
+        appliedToPaymentId: row.applied_to_payment_id,
+        status: row.coupon_status,
+        owner: { name: row.owner_name, phone: row.owner_phone },
+      })),
+      count: countResult.rows[0]?.count ?? 0,
+      page,
+      pageSize,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
