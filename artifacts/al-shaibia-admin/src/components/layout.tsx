@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Gift,
   TicketPercent,
+  PackageX,
   ChevronRight,
   ChevronLeft,
   X,
@@ -48,6 +49,7 @@ const NAV_ITEMS = [
   { href: "/suspension-requests", label: "طلبات التعليق",       icon: ClipboardList  },
   { href: "/referral-rewards", label: "نظام الإحالات",          icon: Gift           },
   { href: "/incentives", label: "عجلة الحظ والقسائم",           icon: TicketPercent  },
+  { href: "/expired-orders", label: "الطلبات المنتهية",          icon: PackageX       },
 ] as const;
 
 function SidebarContent({ collapsed }: { collapsed: boolean }) {

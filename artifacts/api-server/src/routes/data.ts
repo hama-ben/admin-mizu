@@ -1783,4 +1783,104 @@ router.get("/incentives/coupons", async (req, res) => {
   }
 });
 
+// ── Expired orders ───────────────────────────────────────────────────────────
+// Mizu marks an order as expired after its 12-hour lifetime. The shared schema
+// stores the resulting status and created_at, but not a separate order
+// expiration column, so the display expiry is derived from created_at.
+router.get("/expired-orders", async (req, res) => {
+  try {
+    const query = req.query as Record<string, string | undefined>;
+    const wilaya = query.wilaya?.trim() ?? "";
+    const commune = query.commune?.trim() ?? "";
+    const page = Math.max(0, Number.parseInt(query.page ?? "0", 10) || 0);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize ?? "25", 10) || 25));
+    const params: unknown[] = [];
+    const addParam = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    const where = [`o.status = 'منتهي الصلاحية'`];
+    if (wilaya && wilaya !== "all") where.push(`u.wilaya = ${addParam(wilaya)}`);
+    if (commune) where.push(`u.commune ILIKE ${addParam(`%${commune.replace(/[\\%_]/g, "\\$&")}%`)} ESCAPE '\\'`);
+    const fromSql = `
+      FROM public.orders o
+      LEFT JOIN public.users u ON u.id = o.user_id
+      WHERE ${where.join(" AND ")}
+    `;
+
+    const countResult = await getSupabasePool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count ${fromSql}`,
+      params,
+    );
+    const topMunicipalitiesResult = await getSupabasePool().query<{
+      commune: string | null;
+      wilaya: string | null;
+      order_count: number;
+    }>(
+      `SELECT
+         u.commune,
+         u.wilaya,
+         COUNT(*)::int AS order_count
+       FROM public.orders o
+       LEFT JOIN public.users u ON u.id = o.user_id
+       WHERE o.status = 'منتهي الصلاحية'
+         AND o.created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY u.commune, u.wilaya
+       ORDER BY order_count DESC, u.wilaya ASC, u.commune ASC
+       LIMIT 10`,
+    );
+
+    const limitPlaceholder = addParam(pageSize);
+    const offsetPlaceholder = addParam(page * pageSize);
+    const rowsResult = await getSupabasePool().query<{
+      id: string;
+      user_id: string;
+      created_at: string;
+      customer_name: string | null;
+      customer_phone: string | null;
+      customer_commune: string | null;
+      customer_wilaya: string | null;
+    }>(
+      `SELECT
+         o.id,
+         o.user_id,
+         o.created_at,
+         u.name AS customer_name,
+         u.phone AS customer_phone,
+         u.commune AS customer_commune,
+         u.wilaya AS customer_wilaya
+       ${fromSql}
+       ORDER BY o.created_at DESC
+       LIMIT ${limitPlaceholder}
+       OFFSET ${offsetPlaceholder}`,
+      params,
+    );
+
+    res.json({
+      data: rowsResult.rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        customer: {
+          name: row.customer_name,
+          phone: row.customer_phone,
+          commune: row.customer_commune,
+          wilaya: row.customer_wilaya,
+        },
+        createdAt: row.created_at,
+        expiresAt: new Date(new Date(row.created_at).getTime() + 12 * 60 * 60 * 1000).toISOString(),
+      })),
+      count: countResult.rows[0]?.count ?? 0,
+      page,
+      pageSize,
+      topMunicipalities: topMunicipalitiesResult.rows.map((row) => ({
+        commune: row.commune || "غير محددة",
+        wilaya: row.wilaya || "غير محددة",
+        orderCount: row.order_count,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
