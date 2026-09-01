@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -7,7 +8,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Browsers provide WebSocket natively. When this client is evaluated from a
+// Node.js runtime (for example during SSR or a server-side utility), use the
+// ws implementation instead of relying on Node 20's missing global.
+const realtimeTransport =
+  typeof globalThis.WebSocket === "function" ? globalThis.WebSocket : WebSocket;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  realtime: {
+    transport: realtimeTransport as any,
+  },
+});
 
 // ─── Table types (confirmed schema) ──────────────────────────────────────────
 
