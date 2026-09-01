@@ -33,6 +33,7 @@ function adminClient() {
   if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY not configured");
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
+    realtime: { transport: WebSocket as any },
   });
 }
 
