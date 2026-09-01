@@ -29,6 +29,7 @@ const BREADCRUMB_MAP: Record<string, { label: string; href?: string }[]> = {
   "/audit-log":        [{ label: "لوحة التحكم", href: "/" }, { label: "سجل الإجراءات" }],
   "/suspension-requests":[{ label: "لوحة التحكم", href: "/" }, { label: "طلبات التعليق" }],
   "/expired-orders":   [{ label: "لوحة التحكم", href: "/" }, { label: "الطلبات المنتهية" }],
+  "/motivation":       [{ label: "لوحة التحكم", href: "/" }, { label: "نظرة التحفيز" }],
 };
 
 export function Topbar() {

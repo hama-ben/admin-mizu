@@ -28,6 +28,7 @@ import SuspensionRequestsPage from "@/pages/suspension-requests";
 import ReferralRewardsPage from "@/pages/referral-rewards";
 import IncentivesPage from "@/pages/incentives";
 import ExpiredOrdersPage from "@/pages/expired-orders";
+import MotivationPage from "@/pages/motivation";
 
 const queryClient = new QueryClient();
 
@@ -52,6 +53,7 @@ function Router() {
       <Route path="/referral-rewards" component={ReferralRewardsPage} />
       <Route path="/incentives" component={IncentivesPage} />
       <Route path="/expired-orders" component={ExpiredOrdersPage} />
+      <Route path="/motivation" component={MotivationPage} />
       <Route component={NotFound} />
     </Switch>
   );

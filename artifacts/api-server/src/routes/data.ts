@@ -1883,4 +1883,87 @@ router.get("/expired-orders", async (req, res) => {
   }
 });
 
+// ── Incentive overview ───────────────────────────────────────────────────────
+router.get("/motivation/overview", async (req, res) => {
+  try {
+    const query = req.query as Record<string, string | undefined>;
+    const page = Math.max(0, Number.parseInt(query.page ?? "0", 10) || 0);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize ?? "20", 10) || 20));
+    const offset = page * pageSize;
+    const [awards, total, social] = await Promise.all([
+      getSupabasePool().query<{
+        id: string;
+        month_start: string;
+        month_end: string;
+        wilaya: string;
+        commune: string;
+        driver_id: string;
+        driver_name: string | null;
+        driver_phone: string | null;
+        completed_deliveries: number;
+        average_stars: number;
+        average_delivery_seconds: number;
+      }>(
+        `SELECT
+           a.id,
+           a.month_start,
+           a.month_end,
+           a.wilaya,
+           a.commune,
+           a.driver_id,
+           u.name AS driver_name,
+           u.phone AS driver_phone,
+           a.completed_deliveries,
+           a.average_stars,
+           a.average_delivery_seconds
+         FROM public.monthly_driver_awards a
+         LEFT JOIN public.users u ON u.id = a.driver_id
+         ORDER BY a.month_start DESC, a.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [pageSize, offset],
+      ),
+      getSupabasePool().query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM public.monthly_driver_awards`,
+      ),
+      getSupabasePool().query<{ total: number; qualified: number }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE source = 'social_share')::int AS total,
+           COUNT(*) FILTER (
+             WHERE source = 'social_share' AND status = 'qualified'
+           )::int AS qualified
+         FROM public.referrals
+         WHERE created_at >= date_trunc('month', NOW())`,
+      ),
+    ]);
+
+    res.json({
+      awards: awards.rows.map((row) => ({
+        id: row.id,
+        monthStart: row.month_start,
+        monthEnd: row.month_end,
+        wilaya: row.wilaya,
+        commune: row.commune,
+        driver: {
+          id: row.driver_id,
+          name: row.driver_name,
+          phone: row.driver_phone,
+        },
+        completedDeliveries: row.completed_deliveries,
+        averageStars: Number(row.average_stars),
+        averageDeliverySeconds: Number(row.average_delivery_seconds),
+      })),
+      awardsCount: total.rows[0]?.count ?? 0,
+      page,
+      pageSize,
+      socialShare: {
+        monthStart: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
+        total: social.rows[0]?.total ?? 0,
+        qualified: social.rows[0]?.qualified ?? 0,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
