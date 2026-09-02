@@ -18,6 +18,7 @@ if (!isBuild && (Number.isNaN(port) || port <= 0)) {
 }
 
 const basePath = process.env.BASE_PATH || "/";
+const apiPort = Number(process.env.API_PORT || "3001");
 
 /** Serve index.html for any path that is not an API call, a Vite internal,
  *  or a static asset. This enables React Router's History API in both
@@ -90,7 +91,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://localhost:3001",
+        target: `http://localhost:${apiPort}`,
         changeOrigin: true,
       },
     },
