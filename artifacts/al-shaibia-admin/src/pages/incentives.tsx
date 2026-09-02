@@ -83,6 +83,21 @@ interface CouponResponse {
   pageSize: number;
 }
 
+interface GiftedSpin {
+  id: string;
+  userId: string;
+  usedAt: string | null;
+  createdAt: string;
+  owner: { name: string | null; phone: string | null };
+}
+
+interface GiftedSpinResponse {
+  data: GiftedSpin[];
+  count: number;
+  page: number;
+  pageSize: number;
+}
+
 interface GiftUser {
   id: string;
   name: string;
@@ -146,6 +161,12 @@ export default function IncentivesPage() {
   const [selectedCouponTemplate, setSelectedCouponTemplate] = useState("");
   const [couponToRevoke, setCouponToRevoke] = useState<Coupon | null>(null);
   const [revokingCouponId, setRevokingCouponId] = useState<string | null>(null);
+  const [giftedSpins, setGiftedSpins] = useState<GiftedSpin[]>([]);
+  const [giftedSpinCount, setGiftedSpinCount] = useState(0);
+  const [giftedSpinPage, setGiftedSpinPage] = useState(0);
+  const [giftedSpinsLoading, setGiftedSpinsLoading] = useState(true);
+  const [spinToRevoke, setSpinToRevoke] = useState<GiftedSpin | null>(null);
+  const [revokingSpinId, setRevokingSpinId] = useState<string | null>(null);
   const { toast } = useToast();
 
   async function loadSummary(background = false) {
@@ -191,6 +212,29 @@ export default function IncentivesPage() {
     }
   }
 
+  async function loadGiftedSpins(background = false) {
+    if (!background) setGiftedSpinsLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(giftedSpinPage),
+        pageSize: "25",
+      });
+      const result = await api.get<GiftedSpinResponse>(`/incentives/gifted-spins?${params.toString()}`);
+      setGiftedSpins(result.data ?? []);
+      setGiftedSpinCount(result.count ?? 0);
+    } catch (error: any) {
+      if (!background) {
+        toast({
+          title: "تعذر جلب اللفات المهداة",
+          description: error.message,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      if (!background) setGiftedSpinsLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadSummary();
   }, []);
@@ -201,6 +245,11 @@ export default function IncentivesPage() {
     return () => clearTimeout(timer);
   }, [search, status, discount, page]);
   useAutoRefresh(() => loadCoupons(true), 10000);
+
+  useEffect(() => {
+    loadGiftedSpins();
+  }, [giftedSpinPage]);
+  useAutoRefresh(() => loadGiftedSpins(true), 10000);
 
   function updateFilter(setter: (value: string) => void, value: string) {
     setter(value);
@@ -268,6 +317,8 @@ export default function IncentivesPage() {
       setSelectedCouponTemplate("");
       loadSummary(true);
       loadCoupons(true);
+      setGiftedSpinPage(0);
+      loadGiftedSpins(true);
     } catch (error: any) {
       toast({
         title: "تعذر إتمام الإهداء",
@@ -302,11 +353,35 @@ export default function IncentivesPage() {
     }
   }
 
+  async function revokeGiftedSpin() {
+    if (!spinToRevoke) return;
+
+    setRevokingSpinId(spinToRevoke.id);
+    try {
+      await api.delete(`/incentives/spins/${encodeURIComponent(spinToRevoke.id)}`);
+      toast({
+        title: "تم سحب اللفة",
+        description: "تم حذف اللفة المهداة من حساب المستخدم.",
+      });
+      setSpinToRevoke(null);
+      await Promise.all([loadGiftedSpins(true), loadSummary(true)]);
+    } catch (error: any) {
+      toast({
+        title: "تعذر سحب اللفة",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setRevokingSpinId(null);
+    }
+  }
+
   const visibleGiftUsers = giftUsers.filter((user) => {
     const query = giftUserSearch.trim().toLocaleLowerCase();
     return !query || `${user.name} ${user.phone ?? ""}`.toLocaleLowerCase().includes(query);
   });
   const maxCouponPages = Math.max(1, Math.ceil(couponCount / 25));
+  const maxGiftedSpinPages = Math.max(1, Math.ceil(giftedSpinCount / 25));
   const totalSpins = summary?.totalSpins ?? 0;
   const monthlyCost = summary?.couponCost.monthlyCostDzd ?? 0;
 
@@ -430,6 +505,72 @@ export default function IncentivesPage() {
                 )}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">اللفات المهداة</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            اضغط بزر الفأرة الأيمن على اللفة المهداة لسحبها. لا يمكن سحب اللفات الفائزة من العجلة أو اللفات المستخدمة.
+          </p>
+        </div>
+        <Card>
+          <CardContent className="space-y-4 p-5">
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead>صاحب اللفة</TableHead>
+                    <TableHead>الحالة</TableHead>
+                    <TableHead>تاريخ الإهداء</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {giftedSpinsLoading ? (
+                    Array.from({ length: 3 }).map((_, index) => (
+                      <TableRow key={index}>
+                        {Array.from({ length: 3 }).map((__, cell) => (
+                          <TableCell key={cell}><Skeleton className="h-5 w-24" /></TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : giftedSpins.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">
+                        لا توجد لفات مهداة بعد.
+                      </TableCell>
+                    </TableRow>
+                  ) : giftedSpins.map((spin) => (
+                    <GiftedSpinRow key={spin.id} spin={spin} onRevoke={setSpinToRevoke} />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+              <span>إجمالي اللفات المهداة: {giftedSpinCount}</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGiftedSpinPage((current) => Math.max(0, current - 1))}
+                  disabled={giftedSpinPage === 0 || giftedSpinsLoading}
+                >
+                  السابق
+                </Button>
+                <span>صفحة {giftedSpinPage + 1} من {maxGiftedSpinPages}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGiftedSpinPage((current) => Math.min(maxGiftedSpinPages - 1, current + 1))}
+                  disabled={giftedSpinPage >= maxGiftedSpinPages - 1 || giftedSpinsLoading}
+                >
+                  التالي
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </section>
@@ -745,7 +886,75 @@ export default function IncentivesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={spinToRevoke !== null}
+        onOpenChange={(open) => {
+          if (!open && !revokingSpinId) setSpinToRevoke(null);
+        }}
+      >
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader className="text-right">
+            <AlertDialogTitle>سحب اللفة المهداة؟</AlertDialogTitle>
+            <AlertDialogDescription>
+              سيتم حذف لفة واحدة من حساب{" "}
+              {spinToRevoke?.owner.name || "المستخدم"}. لا يمكن التراجع عن هذا الإجراء.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revokingSpinId !== null}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={revokeGiftedSpin}
+              disabled={revokingSpinId !== null}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {revokingSpinId ? "جارٍ السحب…" : "سحب اللفة"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+function GiftedSpinRow({
+  spin,
+  onRevoke,
+}: {
+  spin: GiftedSpin;
+  onRevoke: (spin: GiftedSpin) => void;
+}) {
+  const row = (
+    <TableRow>
+      <TableCell>
+        <div className="font-medium">{spin.owner.name || "—"}</div>
+        <div className="text-xs text-muted-foreground">{spin.owner.phone || "—"}</div>
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline" className={spin.usedAt ? "border-emerald-500/30 text-emerald-400" : "border-blue-500/30 text-blue-400"}>
+          {spin.usedAt ? "مستخدمة" : "متاحة"}
+        </Badge>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+        {dateLabel(spin.createdAt)}
+      </TableCell>
+    </TableRow>
+  );
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="text-right">
+        <ContextMenuItem
+          disabled={spin.usedAt !== null}
+          onSelect={() => onRevoke(spin)}
+          className="gap-2 text-destructive focus:text-destructive"
+        >
+          <Trash2 className="h-4 w-4" />
+          {spin.usedAt ? "لا يمكن سحب لفة مستخدمة" : "سحب اللفة المهداة"}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

@@ -1920,6 +1920,119 @@ router.post("/incentives/gift", async (req, res) => {
   }
 });
 
+router.get("/incentives/gifted-spins", async (req, res) => {
+  try {
+    const page = Math.max(0, Number.parseInt(String(req.query.page ?? "0"), 10) || 0);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(req.query.pageSize ?? "25"), 10) || 25));
+    const pool = getSupabasePool();
+    const [countResult, rowsResult] = await Promise.all([
+      pool.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM public.wheel_spins
+         WHERE source = 'admin_gift'`,
+      ),
+      pool.query<{
+        id: string;
+        user_id: string;
+        used_at: string | null;
+        created_at: string;
+        owner_name: string | null;
+        owner_phone: string | null;
+      }>(
+        `SELECT
+           ws.id,
+           ws.user_id,
+           ws.used_at,
+           ws.created_at,
+           u.name AS owner_name,
+           u.phone AS owner_phone
+         FROM public.wheel_spins ws
+         LEFT JOIN public.users u ON u.id = ws.user_id
+         WHERE ws.source = 'admin_gift'
+         ORDER BY ws.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [pageSize, page * pageSize],
+      ),
+    ]);
+
+    res.json({
+      data: rowsResult.rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        usedAt: row.used_at,
+        createdAt: row.created_at,
+        owner: { name: row.owner_name, phone: row.owner_phone },
+      })),
+      count: countResult.rows[0]?.count ?? 0,
+      page,
+      pageSize,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/incentives/spins/:id", async (req, res) => {
+  const spinId = String(req.params.id ?? "").trim();
+  if (!spinId) {
+    res.status(400).json({ error: "معرّف اللفة غير صحيح" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const deleted = await client.query<{ id: string; user_id: string }>(
+      `DELETE FROM public.wheel_spins
+       WHERE id = $1
+         AND source = 'admin_gift'
+         AND used_at IS NULL
+       RETURNING id, user_id`,
+      [spinId],
+    );
+
+    if (deleted.rowCount !== 1) {
+      const existing = await client.query<{ source: string; used_at: string | null }>(
+        `SELECT source, used_at
+         FROM public.wheel_spins
+         WHERE id = $1`,
+        [spinId],
+      );
+      await client.query("ROLLBACK");
+
+      const spin = existing.rows[0];
+      if (!spin) {
+        res.status(404).json({ error: "اللفة غير موجودة" });
+      } else if (spin.source !== "admin_gift") {
+        res.status(403).json({ error: "لا يمكن سحب لفات الفوز من العجلة" });
+      } else if (spin.used_at) {
+        res.status(409).json({ error: "لا يمكن سحب لفة تم استخدامها" });
+      } else {
+        res.status(409).json({ error: "تعذر سحب اللفة" });
+      }
+      return;
+    }
+
+    await client.query("COMMIT");
+
+    const spin = deleted.rows[0];
+    await logAdminAction(req, "revoke", "wheel_spin", spinId, {
+      userId: spin.user_id,
+      source: "admin_gift",
+    });
+
+    res.json({ ok: true, spinId });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[INCENTIVES SPIN REVOKE] FAILED", "| spin_id:", spinId, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
+  }
+});
+
 router.delete("/incentives/coupons/:id", async (req, res) => {
   const couponId = String(req.params.id ?? "").trim();
   if (!couponId) {
