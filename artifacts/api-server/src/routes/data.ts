@@ -1060,14 +1060,22 @@ router.patch("/disputes/:id", async (req, res) => {
   try {
     const db = adminClient();
     const { status } = req.body;
+    if (status !== "pending" && status !== "resolved" && status !== "dismissed") {
+      res.status(400).json({ error: "Invalid dispute status" });
+      return;
+    }
+
     // resolved/dismissed → mark is_disputed=false to remove from queue.
     // Add dispute_status column via migration for persistent status tracking.
-    const update = status !== "pending" ? { is_disputed: false } : {};
-    const { error } = await db
-      .from("ratings")
-      .update(update)
-      .eq("id", req.params.id);
-    if (error) throw error;
+    if (status !== "pending") {
+      const { error } = await db
+        .from("ratings")
+        .update({ is_disputed: false })
+        .eq("id", req.params.id)
+        .eq("is_disputed", true);
+      if (error) throw error;
+    }
+
     await logAdminAction(req, "resolve", "dispute", req.params.id, { status });
     res.json({ ok: true });
   } catch (err: any) {

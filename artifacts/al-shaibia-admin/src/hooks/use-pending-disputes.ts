@@ -1,28 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import { useAutoRefresh } from "./use-auto-refresh";
 
 export function usePendingDisputeCount() {
   const [count, setCount] = useState(0);
-  const channelName = useRef(
-    `pending-disputes-count-${Math.random().toString(36).slice(2)}`,
-  );
 
   async function fetchCount() {
-    const { count: c } = await supabase
-      .from("ratings")
-      .select("*", { count: "exact", head: true })
-      .eq("is_disputed", true);
-    setCount(c ?? 0);
+    try {
+      const result = await api.get<{ count: number }>("/disputes/pending-count");
+      setCount(result.count ?? 0);
+    } catch {
+      // Keep the sidebar quiet when an admin session is refreshing or the
+      // backend is temporarily unavailable.
+    }
   }
 
   useEffect(() => {
     fetchCount();
-    const channel = supabase
-      .channel(channelName.current)
-      .on("postgres_changes", { event: "*", schema: "public", table: "ratings" }, fetchCount)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
   }, []);
+  useAutoRefresh(fetchCount, 10000);
 
   return count;
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
-import { supabase, type RatingDispute, type DisputeStatus } from "@/lib/supabase";
+import { type RatingDispute, type DisputeStatus } from "@/lib/supabase";
+import { api } from "@/lib/api";
 import { formatDate } from "@/lib/constants";
+import { useAutoRefresh } from "@/hooks/use-auto-refresh";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,27 +70,20 @@ export default function DisputesPage() {
 
   useEffect(() => {
     fetchDisputes();
-    const channel = supabase
-      .channel("disputes-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "ratings" }, fetchDisputes)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
   }, []);
+  useAutoRefresh(() => fetchDisputes(true), 10000);
 
-  async function fetchDisputes() {
-    setLoading(true);
+  async function fetchDisputes(background = false) {
+    if (!background) setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("ratings")
-        .select("id, rated_user_id, stars, dispute_reason, comment, created_at")
-        .eq("is_disputed", true)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setDisputes((data ?? []).map(mapRow));
+      const data = await api.get<RatingDispute[]>("/disputes");
+      setDisputes(data ?? []);
     } catch (err: any) {
-      toast({ title: "خطأ في جلب البيانات", description: err.message, variant: "destructive" });
+      if (!background) {
+        toast({ title: "خطأ في جلب البيانات", description: err.message, variant: "destructive" });
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }
 
@@ -97,12 +92,8 @@ export default function DisputesPage() {
       // When resolved or dismissed, mark is_disputed = false so the rating is
       // removed from the disputes queue. To persist distinct resolved/dismissed
       // states, run the migration in the comment above to add dispute_status.
+      await api.patch(`/disputes/${encodeURIComponent(id)}`, { status });
       if (status !== "pending") {
-        const { error } = await supabase
-          .from("ratings")
-          .update({ is_disputed: false })
-          .eq("id", id);
-        if (error) throw error;
         setDisputes((prev) => prev.filter((d) => d.id !== id));
         if (selected?.id === id) setSelected(null);
       } else {
