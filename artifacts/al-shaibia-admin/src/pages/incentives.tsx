@@ -90,8 +90,6 @@ interface GiftCouponType {
   id: string;
   discountPercentage: number;
   maxDiscountAmount: number | null;
-  totalCount: number;
-  availableCount: number;
 }
 
 const STATUS_LABELS: Record<CouponStatus, string> = {
@@ -671,7 +669,7 @@ export default function IncentivesPage() {
 
             {giftType === "coupon" && (
               <div className="space-y-2">
-                <Label>القسائم الموجودة</Label>
+                <Label>نوع القسيمة</Label>
                 {giftOptionsLoading ? (
                   <Skeleton className="h-11 w-full" />
                 ) : giftCouponTypes.length === 0 ? (
@@ -691,8 +689,7 @@ export default function IncentivesPage() {
                           <span className="block font-medium">خصم {coupon.discountPercentage}%</span>
                           <span className="block text-xs text-muted-foreground">
                             {coupon.maxDiscountAmount === null ? "بلا سقف" : `سقف ${formatDZD(coupon.maxDiscountAmount)}`}
-                            {" • "}
-                            {coupon.availableCount} متاحة
+                            {" • نوع جاهز للإهداء"}
                           </span>
                         </span>
                       </Label>

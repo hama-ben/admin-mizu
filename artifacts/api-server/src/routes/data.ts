@@ -1579,6 +1579,13 @@ const DESIGNED_WHEEL_DISTRIBUTION = [
 
 const COUPON_DISCOUNT_PERCENTAGES = [100, 75, 50, 25, 10] as const;
 const COUPON_STATUS_VALUES = ["pending_activation", "active", "used", "expired"] as const;
+const GIFT_COUPON_TYPES = [
+  { id: "gift-100", discountPercentage: 100, maxDiscountAmount: null },
+  { id: "gift-75", discountPercentage: 75, maxDiscountAmount: 750 },
+  { id: "gift-50", discountPercentage: 50, maxDiscountAmount: 500 },
+  { id: "gift-25", discountPercentage: 25, maxDiscountAmount: null },
+  { id: "gift-10", discountPercentage: 10, maxDiscountAmount: null },
+] as const;
 type CouponStatus = (typeof COUPON_STATUS_VALUES)[number];
 type MonthlyCouponBreakdown = {
   discountPercentage: number | null;
@@ -1788,48 +1795,7 @@ router.get("/incentives/gift-users", async (req, res) => {
 });
 
 router.get("/incentives/gift-coupon-types", async (_req, res) => {
-  try {
-    const result = await getSupabasePool().query<{
-      id: string;
-      discount_percentage: number;
-      max_discount_amount: number | null;
-      total_count: number;
-      available_count: number;
-    }>(
-      `SELECT DISTINCT ON (c.discount_percentage, c.max_discount_amount)
-         c.id::text,
-         c.discount_percentage,
-         c.max_discount_amount,
-         COUNT(*) OVER (
-           PARTITION BY c.discount_percentage, c.max_discount_amount
-         )::int AS total_count,
-         COUNT(*) FILTER (
-           WHERE c.used_at IS NULL
-             AND (c.expires_at IS NULL OR c.expires_at > NOW())
-         ) OVER (
-           PARTITION BY c.discount_percentage, c.max_discount_amount
-         )::int AS available_count
-       FROM public.coupons c
-       ORDER BY
-         c.discount_percentage DESC,
-         c.max_discount_amount NULLS LAST,
-         (c.used_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > NOW())) DESC,
-         c.won_at DESC
-       LIMIT 50`,
-    );
-
-    res.json({
-      data: result.rows.map((coupon) => ({
-        id: coupon.id,
-        discountPercentage: coupon.discount_percentage,
-        maxDiscountAmount: coupon.max_discount_amount,
-        totalCount: coupon.total_count,
-        availableCount: coupon.available_count,
-      })),
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ data: GIFT_COUPON_TYPES });
 });
 
 router.post("/incentives/gift", async (req, res) => {
@@ -1889,32 +1855,41 @@ router.post("/incentives/gift", async (req, res) => {
         throw new Error("تعذر إنشاء اللفات المهداة كاملة");
       }
     } else {
-      const templateResult = await client.query<{
-        discount_percentage: number;
-        max_discount_amount: number | null;
-      }>(
-        `SELECT discount_percentage, max_discount_amount
-         FROM public.coupons
-         WHERE id = $1
-         FOR SHARE`,
-        [couponTemplateId],
-      );
-      const template = templateResult.rows[0];
-      if (!template) {
-        await client.query("ROLLBACK");
-        res.status(404).json({ error: "نوع القسيمة غير موجود" });
-        return;
+      const configuredType = GIFT_COUPON_TYPES.find((type) => type.id === couponTemplateId);
+      let couponType: { discountPercentage: number; maxDiscountAmount: number | null };
+
+      if (configuredType) {
+        couponType = configuredType;
+      } else {
+        const templateResult = await client.query<{
+          discount_percentage: number;
+          max_discount_amount: number | null;
+        }>(
+          `SELECT discount_percentage, max_discount_amount
+           FROM public.coupons
+           WHERE id = $1
+           FOR SHARE`,
+          [couponTemplateId],
+        );
+        const template = templateResult.rows[0];
+        if (!template) {
+          await client.query("ROLLBACK");
+          res.status(404).json({ error: "نوع القسيمة غير موجود" });
+          return;
+        }
+        couponType = {
+          discountPercentage: template.discount_percentage,
+          maxDiscountAmount: template.max_discount_amount,
+        };
       }
-      discountPercentage = template.discount_percentage;
+      discountPercentage = couponType.discountPercentage;
 
       const insertResult = await client.query(
         `INSERT INTO public.coupons
            (user_id, discount_percentage, max_discount_amount, won_at, activation_trigger_at, expires_at)
-         SELECT $1, c.discount_percentage, c.max_discount_amount, NOW(), NOW(), NOW() + INTERVAL '30 days'
-         FROM public.coupons c
-         CROSS JOIN generate_series(1, $2::int)
-         WHERE c.id = $3`,
-        [userId, quantity, couponTemplateId],
+         SELECT $1, $2, $3, NOW(), NOW(), NOW() + INTERVAL '30 days'
+         FROM generate_series(1, $4::int)`,
+        [userId, couponType.discountPercentage, couponType.maxDiscountAmount, quantity],
       );
       if ((insertResult.rowCount ?? 0) !== quantity) {
         throw new Error("تعذر إنشاء القسائم المهداة كاملة");
