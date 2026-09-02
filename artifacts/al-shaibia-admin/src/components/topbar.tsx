@@ -26,6 +26,7 @@ const BREADCRUMB_MAP: Record<string, { label: string; href?: string }[]> = {
   "/suspended-drivers":[{ label: "لوحة التحكم", href: "/" }, { label: "السائقون الموقوفون" }],
   "/banned-drivers":   [{ label: "لوحة التحكم", href: "/" }, { label: "السائقون المحظورون" }],
   "/expired-accounts": [{ label: "لوحة التحكم", href: "/" }, { label: "الحسابات المنتهية" }],
+  "/appeals":          [{ label: "لوحة التحكم", href: "/" }, { label: "الطعون" }],
   "/audit-log":        [{ label: "لوحة التحكم", href: "/" }, { label: "سجل الإجراءات" }],
   "/suspension-requests":[{ label: "لوحة التحكم", href: "/" }, { label: "طلبات التعليق" }],
   "/expired-orders":   [{ label: "لوحة التحكم", href: "/" }, { label: "الطلبات المنتهية" }],

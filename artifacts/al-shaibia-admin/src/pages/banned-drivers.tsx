@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "wouter";
 import { authedFetch } from "@/lib/api";
 import { supabase, USER_TYPE_DRIVER, type User, type DriverDetails } from "@/lib/supabase";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ShieldCheck, ShieldBan, Clock, MapPin, Phone } from "lucide-react";
+import { ShieldCheck, ShieldBan, Clock, MapPin, Phone, FileText } from "lucide-react";
 import { useAutoRefresh } from "@/hooks/use-auto-refresh";
 
 interface BannedDriver extends User {
@@ -71,11 +72,18 @@ export default function BannedDriversPage() {
 
   return (
      <div className="p-4 sm:p-6 lg:p-8 space-y-6 animate-in fade-in duration-500">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">السائقون المحظورون</h1>
-        <p className="text-muted-foreground mt-2">
-           حسابات السائقين المحظورة نهائياً — {loading ? "…" : drivers.length} حساب.
-        </p>
+       <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+         <div>
+           <h1 className="text-3xl font-bold tracking-tight">السائقون المحظورون</h1>
+           <p className="text-muted-foreground mt-2">
+              حسابات السائقين المحظورة نهائياً — {loading ? "…" : drivers.length} حساب.
+           </p>
+         </div>
+         <Link href="/appeals">
+           <Button variant="outline" className="gap-2 border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
+             <FileText className="w-4 h-4" /> الطعون
+           </Button>
+         </Link>
       </div>
 
       {loading ? (

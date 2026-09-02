@@ -22,6 +22,7 @@ import RejectedDriversPage from "@/pages/rejected-drivers";
 import SuspendedDriversPage from "@/pages/suspended-drivers";
 import BannedDriversPage from "@/pages/banned-drivers";
 import ExpiredAccountsPage from "@/pages/expired-accounts";
+import AppealsPage from "@/pages/appeals";
 import SupportChatPage from "@/pages/support-chat";
 import AuditLogPage from "@/pages/audit-log";
 import SuspensionRequestsPage from "@/pages/suspension-requests";
@@ -48,6 +49,7 @@ function Router() {
       <Route path="/suspended-drivers" component={SuspendedDriversPage} />
       <Route path="/banned-drivers" component={BannedDriversPage} />
       <Route path="/expired-accounts" component={ExpiredAccountsPage} />
+      <Route path="/appeals" component={AppealsPage} />
       <Route path="/audit-log" component={AuditLogPage} />
       <Route path="/suspension-requests" component={SuspensionRequestsPage} />
       <Route path="/referral-rewards" component={ReferralRewardsPage} />
