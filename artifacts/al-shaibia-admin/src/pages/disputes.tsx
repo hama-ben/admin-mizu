@@ -25,6 +25,18 @@ const STATUS_STYLES: Record<DisputeStatus, string> = {
   dismissed: "bg-slate-500/20 text-slate-400 border-slate-500/20",
 };
 
+interface DisputeHistoryEntry {
+  id: string;
+  disputeId: string | null;
+  driverId: string | null;
+  rating: number;
+  comment: string | null;
+  wilaya: string | null;
+  status: "resolved" | "dismissed";
+  adminEmail: string | null;
+  resolvedAt: string;
+}
+
 function StarRating({ rating }: { rating: number }) {
   return (
     <div className="flex items-center gap-0.5">
@@ -62,7 +74,10 @@ function mapRow(row: Record<string, any>): RatingDispute {
 
 export default function DisputesPage() {
   const [disputes, setDisputes] = useState<RatingDispute[]>([]);
+  const [history, setHistory] = useState<DisputeHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [view, setView] = useState<"pending" | "history">("pending");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selected, setSelected] = useState<RatingDispute | null>(null);
@@ -70,8 +85,11 @@ export default function DisputesPage() {
 
   useEffect(() => {
     fetchDisputes();
+    fetchHistory();
   }, []);
-  useAutoRefresh(() => fetchDisputes(true), 10000);
+  useAutoRefresh(async () => {
+    await Promise.all([fetchDisputes(true), fetchHistory(true)]);
+  }, 10000);
 
   async function fetchDisputes(background = false) {
     if (!background) setLoading(true);
@@ -84,6 +102,20 @@ export default function DisputesPage() {
       }
     } finally {
       if (!background) setLoading(false);
+    }
+  }
+
+  async function fetchHistory(background = false) {
+    if (!background) setHistoryLoading(true);
+    try {
+      const data = await api.get<DisputeHistoryEntry[]>("/disputes/history");
+      setHistory(data ?? []);
+    } catch (err: any) {
+      if (!background) {
+        toast({ title: "تعذر جلب سجل النزاعات", description: err.message, variant: "destructive" });
+      }
+    } finally {
+      if (!background) setHistoryLoading(false);
     }
   }
 
@@ -100,6 +132,7 @@ export default function DisputesPage() {
         setDisputes((prev) => prev.map((d) => d.id === id ? { ...d, status } : d));
         if (selected?.id === id) setSelected((s) => s ? { ...s, status } : null);
       }
+      await fetchHistory(true);
       toast({ title: "تم تحديث الحالة", description: `"${STATUS_LABELS[status]}"` });
     } catch (err: any) {
       toast({ title: "فشل التحديث", description: err.message, variant: "destructive" });
@@ -113,6 +146,14 @@ export default function DisputesPage() {
   }), [disputes, search, statusFilter]);
 
   const pendingCount = disputes.filter((d) => d.status === "pending").length;
+  const filteredHistory = useMemo(() => history.filter((entry) => {
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+    return entry.comment?.toLowerCase().includes(query)
+      || entry.driverId?.toLowerCase().includes(query)
+      || entry.wilaya?.toLowerCase().includes(query)
+      || entry.adminEmail?.toLowerCase().includes(query);
+  }), [history, search]);
 
   return (
     <div className="p-8 space-y-6 animate-in fade-in duration-500">
@@ -128,87 +169,158 @@ export default function DisputesPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 bg-card p-4 rounded-lg border border-border">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="بحث بالتعليق أو الولاية..." className="pr-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="الحالة" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">جميع الحالات</SelectItem>
-            <SelectItem value="pending">معلق</SelectItem>
-            <SelectItem value="resolved">تمت المعالجة</SelectItem>
-            <SelectItem value="dismissed">مغلق</SelectItem>
-          </SelectContent>
-        </Select>
-        <span className="text-sm text-muted-foreground ml-auto">{filtered.length} نتيجة</span>
+      <div className="flex flex-wrap gap-2">
+        <Button variant={view === "pending" ? "default" : "outline"} onClick={() => setView("pending")}>
+          النزاعات المعلقة
+          <Badge variant="secondary" className="mr-2">{pendingCount}</Badge>
+        </Button>
+        <Button variant={view === "history" ? "default" : "outline"} onClick={() => setView("history")}>
+          سجل المعالجة
+          <Badge variant="secondary" className="mr-2">{history.length}</Badge>
+        </Button>
       </div>
 
-      <div className="border rounded-md overflow-hidden bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead>معرّف السائق</TableHead>
-              <TableHead>التقييم</TableHead>
-              <TableHead>الولاية</TableHead>
-              <TableHead className="w-[30%]">الرسالة</TableHead>
-              <TableHead>الحالة</TableHead>
-              <TableHead>التاريخ</TableHead>
-              <TableHead className="text-right">الإجراءات</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              Array(6).fill(0).map((_, i) => (
-                <TableRow key={i}>{Array(7).fill(0).map((__, j) => <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>)}</TableRow>
-              ))
-            ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-16 text-muted-foreground">
-                  <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                  <p className="font-medium text-foreground">لا توجد نزاعات</p>
-                  <p className="text-sm mt-1">جرّب تغيير خيارات البحث أو التصفية.</p>
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((dispute) => (
-                <TableRow key={dispute.id}>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {dispute.driver_id?.slice(0, 12) ?? "—"}…
-                  </TableCell>
-                  <TableCell><StarRating rating={dispute.rating} /></TableCell>
-                  <TableCell className="text-sm">{dispute.wilaya || "—"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {dispute.comment
-                      ? <span className="line-clamp-2">{dispute.comment}</span>
-                      : <span className="italic opacity-50">لا توجد رسالة</span>
-                    }
-                  </TableCell>
-                  <TableCell>
-                    <Select value={dispute.status} onValueChange={(v) => handleStatusChange(dispute.id, v as DisputeStatus)}>
-                      <SelectTrigger className="h-8 w-[150px] text-xs">
-                        <Badge variant="outline" className={STATUS_STYLES[dispute.status]}>{STATUS_LABELS[dispute.status]}</Badge>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">معلق</SelectItem>
-                        <SelectItem value="resolved">تمت المعالجة</SelectItem>
-                        <SelectItem value="dismissed">مغلق</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{formatDate(dispute.created_at)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setSelected(dispute)}>
-                      <Eye className="w-4 h-4" /> عرض
-                    </Button>
-                  </TableCell>
+      {view === "pending" ? (
+        <>
+          <div className="flex flex-wrap items-center gap-3 bg-card p-4 rounded-lg border border-border">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder="بحث بالتعليق أو الولاية..." className="pr-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[180px]"><SelectValue placeholder="الحالة" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">جميع الحالات</SelectItem>
+                <SelectItem value="pending">معلق</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-muted-foreground ml-auto">{filtered.length} نتيجة</span>
+          </div>
+
+          <div className="border rounded-md overflow-hidden bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead>معرّف السائق</TableHead>
+                  <TableHead>التقييم</TableHead>
+                  <TableHead>الولاية</TableHead>
+                  <TableHead className="w-[30%]">الرسالة</TableHead>
+                  <TableHead>الحالة</TableHead>
+                  <TableHead>التاريخ</TableHead>
+                  <TableHead className="text-right">الإجراءات</TableHead>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  Array(6).fill(0).map((_, i) => (
+                    <TableRow key={i}>{Array(7).fill(0).map((__, j) => <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>)}</TableRow>
+                  ))
+                ) : filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-16 text-muted-foreground">
+                      <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      <p className="font-medium text-foreground">لا توجد نزاعات معلقة</p>
+                      <p className="text-sm mt-1">جرّب تغيير خيارات البحث أو التصفية.</p>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((dispute) => (
+                    <TableRow key={dispute.id}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {dispute.driver_id?.slice(0, 12) ?? "—"}…
+                      </TableCell>
+                      <TableCell><StarRating rating={dispute.rating} /></TableCell>
+                      <TableCell className="text-sm">{dispute.wilaya || "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {dispute.comment
+                          ? <span className="line-clamp-2">{dispute.comment}</span>
+                          : <span className="italic opacity-50">لا توجد رسالة</span>
+                        }
+                      </TableCell>
+                      <TableCell>
+                        <Select value={dispute.status} onValueChange={(v) => handleStatusChange(dispute.id, v as DisputeStatus)}>
+                          <SelectTrigger className="h-8 w-[150px] text-xs">
+                            <Badge variant="outline" className={STATUS_STYLES[dispute.status]}>{STATUS_LABELS[dispute.status]}</Badge>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending">معلق</SelectItem>
+                            <SelectItem value="resolved">تمت المعالجة</SelectItem>
+                            <SelectItem value="dismissed">مغلق</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{formatDate(dispute.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setSelected(dispute)}>
+                          <Eye className="w-4 h-4" /> عرض
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3 bg-card p-4 rounded-lg border border-border">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder="بحث بالتعليق أو الولاية أو الأدمن..." className="pr-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <span className="text-sm text-muted-foreground ml-auto">{filteredHistory.length} نتيجة</span>
+          </div>
+
+          <div className="border rounded-md overflow-hidden bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead>معرّف السائق</TableHead>
+                  <TableHead>التقييم</TableHead>
+                  <TableHead>الرسالة</TableHead>
+                  <TableHead>القرار</TableHead>
+                  <TableHead>الأدمن</TableHead>
+                  <TableHead>تاريخ المعالجة</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historyLoading ? (
+                  Array(6).fill(0).map((_, i) => (
+                    <TableRow key={i}>{Array(6).fill(0).map((__, j) => <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>)}</TableRow>
+                  ))
+                ) : filteredHistory.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
+                      <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      <p className="font-medium text-foreground">لا يوجد سجل معالجة بعد</p>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredHistory.map((entry) => (
+                    <TableRow key={entry.id}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {entry.driverId?.slice(0, 12) ?? "—"}…
+                      </TableCell>
+                      <TableCell><StarRating rating={entry.rating} /></TableCell>
+                      <TableCell className="max-w-[30%] text-sm text-muted-foreground">
+                        {entry.comment ?? <span className="italic opacity-50">لا توجد رسالة</span>}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={STATUS_STYLES[entry.status]}>
+                          {STATUS_LABELS[entry.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{entry.adminEmail ?? "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{formatDate(entry.resolvedAt)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </>
+      )}
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <DialogContent className="max-w-lg">

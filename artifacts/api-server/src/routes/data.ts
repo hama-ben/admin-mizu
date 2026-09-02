@@ -1055,6 +1055,67 @@ router.get("/disputes", async (_req, res) => {
   }
 });
 
+// GET /api/data/disputes/history
+// History is read from the existing audit log. No additional dispute table or
+// column is required: resolving a dispute already records the admin decision.
+router.get("/disputes/history", async (_req, res) => {
+  try {
+    const result = await getSupabasePool().query<{
+      id: string;
+      dispute_id: string | null;
+      rated_user_id: string | null;
+      stars: number | null;
+      dispute_reason: string | null;
+      comment: string | null;
+      wilaya: string | null;
+      status: "resolved" | "dismissed";
+      admin_email: string | null;
+      resolved_at: string;
+    }>(
+      `SELECT *
+       FROM (
+         SELECT DISTINCT ON (a.target_id)
+           a.id::text AS id,
+           a.target_id AS dispute_id,
+           r.rated_user_id,
+           r.stars,
+           r.dispute_reason,
+           r.comment,
+           u.wilaya,
+           CASE
+             WHEN a.details->>'status' = 'dismissed' THEN 'dismissed'
+             ELSE 'resolved'
+           END AS status,
+           a.admin_email,
+           a.created_at AS resolved_at
+         FROM public.audit_log a
+         LEFT JOIN public.ratings r ON r.id = a.target_id
+         LEFT JOIN public.users u ON u.id = r.rated_user_id
+         WHERE a.target_type = 'dispute'
+           AND a.action_type = 'resolve'
+           AND a.details->>'status' IN ('resolved', 'dismissed')
+         ORDER BY a.target_id, a.created_at DESC
+       ) AS latest_history
+       ORDER BY resolved_at DESC
+       LIMIT 1000`,
+    );
+
+    res.json(result.rows.map((row) => ({
+      id: row.id,
+      disputeId: row.dispute_id,
+      driverId: row.rated_user_id,
+      rating: row.stars ?? 0,
+      comment: row.dispute_reason ?? row.comment ?? null,
+      wilaya: row.wilaya,
+      status: row.status,
+      adminEmail: row.admin_email,
+      resolvedAt: row.resolved_at,
+    })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/data/disputes/:id
 router.patch("/disputes/:id", async (req, res) => {
   try {
