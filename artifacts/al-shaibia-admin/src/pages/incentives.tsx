@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  CalendarClock,
   CircleDollarSign,
   Clock3,
   Gift,
@@ -161,6 +162,13 @@ export default function IncentivesPage() {
   const [giftType, setGiftType] = useState<"spins" | "coupon">("spins");
   const [giftQuantity, setGiftQuantity] = useState("1");
   const [selectedCouponTemplate, setSelectedCouponTemplate] = useState("");
+  const [subscriptionGiftOpen, setSubscriptionGiftOpen] = useState(false);
+  const [subscriptionGiftSubmitting, setSubscriptionGiftSubmitting] = useState(false);
+  const [subscriptionGiftUserSearch, setSubscriptionGiftUserSearch] = useState("");
+  const [selectedSubscriptionDriver, setSelectedSubscriptionDriver] = useState("");
+  const [giftDays, setGiftDays] = useState("0");
+  const [giftHours, setGiftHours] = useState("0");
+  const [giftMinutes, setGiftMinutes] = useState("0");
   const [couponToRevoke, setCouponToRevoke] = useState<Coupon | null>(null);
   const [revokingCouponId, setRevokingCouponId] = useState<string | null>(null);
   const [giftedSpins, setGiftedSpins] = useState<GiftedSpin[]>([]);
@@ -282,6 +290,23 @@ export default function IncentivesPage() {
     }
   }
 
+  async function openSubscriptionGiftDialog() {
+    setSubscriptionGiftOpen(true);
+    setGiftUsersLoading(true);
+    try {
+      const usersResult = await api.get<{ data: GiftUser[] }>("/incentives/gift-users");
+      setGiftUsers(usersResult.data ?? []);
+    } catch (error: any) {
+      toast({
+        title: "تعذر تحميل قائمة السائقين",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setGiftUsersLoading(false);
+    }
+  }
+
   async function submitGift() {
     const quantity = Number(giftQuantity);
     if (!selectedGiftUser || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
@@ -330,6 +355,55 @@ export default function IncentivesPage() {
       });
     } finally {
       setGiftSubmitting(false);
+    }
+  }
+
+  async function submitSubscriptionGift() {
+    const days = Number(giftDays);
+    const hours = Number(giftHours);
+    const minutes = Number(giftMinutes);
+    if (
+      !selectedSubscriptionDriver
+      || !Number.isInteger(days) || days < 0
+      || !Number.isInteger(hours) || hours < 0
+      || !Number.isInteger(minutes) || minutes < 0
+      || (days === 0 && hours === 0 && minutes === 0)
+    ) {
+      toast({
+        title: "أكمل بيانات الهدية",
+        description: "اختر سائقاً وأدخل مدة موجبة بالأيام أو الساعات أو الدقائق.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSubscriptionGiftSubmitting(true);
+    try {
+      const result = await api.post<{ newExpiry: string }>("/incentives/subscription-gift", {
+        userId: selectedSubscriptionDriver,
+        days,
+        hours,
+        minutes,
+      });
+      const selectedDriver = giftUsers.find((user) => user.id === selectedSubscriptionDriver);
+      toast({
+        title: "تمت إضافة الأيام المهداة",
+        description: `تم تمديد اشتراك ${selectedDriver?.name ?? "السائق"} حتى ${new Date(result.newExpiry).toLocaleString("ar-DZ")}.`,
+      });
+      setSubscriptionGiftOpen(false);
+      setSelectedSubscriptionDriver("");
+      setSubscriptionGiftUserSearch("");
+      setGiftDays("0");
+      setGiftHours("0");
+      setGiftMinutes("0");
+    } catch (error: any) {
+      toast({
+        title: "تعذر إضافة الأيام المهداة",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSubscriptionGiftSubmitting(false);
     }
   }
 
@@ -400,6 +474,12 @@ export default function IncentivesPage() {
     const query = giftUserSearch.trim().toLocaleLowerCase();
     return !query || `${user.name} ${user.phone ?? ""}`.toLocaleLowerCase().includes(query);
   });
+  const visibleGiftDrivers = giftUsers
+    .filter((user) => user.userType === "سائق")
+    .filter((user) => {
+      const query = subscriptionGiftUserSearch.trim().toLocaleLowerCase();
+      return !query || `${user.name} ${user.phone ?? ""}`.toLocaleLowerCase().includes(query);
+    });
   const maxCouponPages = Math.max(1, Math.ceil(couponCount / 25));
   const maxGiftedSpinPages = Math.max(1, Math.ceil(giftedSpinCount / 25));
   const totalSpins = summary?.totalSpins ?? 0;
@@ -465,6 +545,35 @@ export default function IncentivesPage() {
           valueClass={(summary?.couponCost.missingAppliedAmountCount ?? 0) > 0 ? "text-red-400" : "text-emerald-400"}
         />
       </div>
+
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-xl font-semibold">
+              <CalendarClock className="h-5 w-5 text-primary" />
+              الأيام المهداة للسائقين
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              أضف أي مدة اشتراك تختارها إلى حساب سائق، بدون التأثير على حالة الحساب.
+            </p>
+          </div>
+          <Button className="gap-2" onClick={openSubscriptionGiftDialog}>
+            <CalendarClock className="h-4 w-4" />
+            إهداء مدة اشتراك
+          </Button>
+        </div>
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
+            <div>
+              <p className="font-medium">إضافة أيام أو ساعات أو دقائق</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                يمكنك إدخال أي مجموعة موجبة، وسيتم احتسابها فوق الاشتراك الحالي أو من الآن إذا كان منتهيًا.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-primary/30 text-primary">للسائقين فقط</Badge>
+          </CardContent>
+        </Card>
+      </section>
 
       <section className="space-y-4">
         <div>
@@ -876,6 +985,84 @@ export default function IncentivesPage() {
               <Button variant="outline" onClick={() => setGiftOpen(false)} disabled={giftSubmitting}>إلغاء</Button>
               <Button onClick={submitGift} disabled={giftSubmitting || giftUsersLoading || giftOptionsLoading}>
                 {giftSubmitting ? "جارٍ الإرسال…" : "إرسال الهدية"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={subscriptionGiftOpen} onOpenChange={setSubscriptionGiftOpen}>
+        <DialogContent dir="rtl" className="max-w-2xl">
+          <DialogHeader className="text-right">
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarClock className="h-5 w-5 text-primary" />
+              إهداء أيام للسائق
+            </DialogTitle>
+            <DialogDescription>
+              اختر السائق وأدخل الأيام والساعات والدقائق التي تريد إضافتها إلى اشتراكه.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="subscription-gift-driver-search">السائقون</Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="subscription-gift-driver-search"
+                  value={subscriptionGiftUserSearch}
+                  onChange={(event) => setSubscriptionGiftUserSearch(event.target.value)}
+                  placeholder="ابحث باسم السائق أو هاتفه…"
+                  className="pr-9"
+                />
+              </div>
+              <div className="max-h-56 overflow-y-auto rounded-md border">
+                {giftUsersLoading ? (
+                  <div className="space-y-3 p-4">
+                    {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}
+                  </div>
+                ) : visibleGiftDrivers.length === 0 ? (
+                  <p className="p-6 text-center text-sm text-muted-foreground">لا يوجد سائقون مطابقون.</p>
+                ) : (
+                  <RadioGroup value={selectedSubscriptionDriver} onValueChange={setSelectedSubscriptionDriver} className="gap-0">
+                    {visibleGiftDrivers.map((driver) => (
+                      <Label
+                        key={driver.id}
+                        htmlFor={`subscription-gift-driver-${driver.id}`}
+                        className="flex cursor-pointer items-center gap-3 border-b p-3 last:border-b-0 hover:bg-muted/40"
+                      >
+                        <RadioGroupItem value={driver.id} id={`subscription-gift-driver-${driver.id}`} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{driver.name || "بدون اسم"}</span>
+                          <span className="block text-xs text-muted-foreground">{driver.phone || "بدون هاتف"}</span>
+                        </span>
+                        <Badge variant="outline" className="text-blue-400">سائق</Badge>
+                      </Label>
+                    ))}
+                  </RadioGroup>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="gift-days">الأيام</Label>
+                <Input id="gift-days" type="number" min={0} step={1} value={giftDays} onChange={(event) => setGiftDays(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gift-hours">الساعات</Label>
+                <Input id="gift-hours" type="number" min={0} step={1} value={giftHours} onChange={(event) => setGiftHours(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gift-minutes">الدقائق</Label>
+                <Input id="gift-minutes" type="number" min={0} step={1} value={giftMinutes} onChange={(event) => setGiftMinutes(event.target.value)} />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSubscriptionGiftOpen(false)} disabled={subscriptionGiftSubmitting}>إلغاء</Button>
+              <Button onClick={submitSubscriptionGift} disabled={subscriptionGiftSubmitting || giftUsersLoading}>
+                {subscriptionGiftSubmitting ? "جارٍ الإضافة…" : "إضافة المدة"}
               </Button>
             </div>
           </div>

@@ -1798,6 +1798,83 @@ router.get("/incentives/gift-coupon-types", async (_req, res) => {
   res.json({ data: GIFT_COUPON_TYPES });
 });
 
+router.post("/incentives/subscription-gift", async (req, res) => {
+  const body = req.body as {
+    userId?: unknown;
+    days?: unknown;
+    hours?: unknown;
+    minutes?: unknown;
+  };
+  const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+  const parseWholeNumber = (value: unknown) => {
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  };
+  const days = parseWholeNumber(body.days);
+  const hours = parseWholeNumber(body.hours);
+  const minutes = parseWholeNumber(body.minutes);
+
+  if (!userId || days === null || hours === null || minutes === null || (days === 0 && hours === 0 && minutes === 0)) {
+    res.status(400).json({ error: "اختر سائقاً وأدخل مدة موجبة بالأيام أو الساعات أو الدقائق" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const driverResult = await client.query<{ id: string; name: string | null; account_status: string | null }>(
+      `SELECT id, name, account_status
+       FROM public.users
+       WHERE id = $1 AND user_type = 'سائق'
+       FOR UPDATE`,
+      [userId],
+    );
+    const driver = driverResult.rows[0];
+    if (!driver) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "السائق غير موجود" });
+      return;
+    }
+
+    const updateResult = await client.query<{ subscription_expires_at: string }>(
+      `UPDATE public.users
+       SET subscription_expires_at =
+         GREATEST(COALESCE(subscription_expires_at, NOW()), NOW())
+         + make_interval(days => $2::int, hours => $3::int, mins => $4::int)
+       WHERE id = $1 AND user_type = 'سائق'
+       RETURNING subscription_expires_at`,
+      [userId, days, hours, minutes],
+    );
+    if (!updateResult.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "تعذر تحديث اشتراك السائق" });
+      return;
+    }
+
+    await client.query("COMMIT");
+
+    const newExpiry = updateResult.rows[0].subscription_expires_at;
+    await logAdminAction(req, "gift", "subscription_time", userId, {
+      userId,
+      days,
+      hours,
+      minutes,
+      newExpiry,
+      accountStatus: driver.account_status,
+    });
+
+    res.json({ ok: true, userId, days, hours, minutes, newExpiry });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[SUBSCRIPTION GIFT] FAILED", "| user_id:", userId, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
+  }
+});
+
 router.post("/incentives/gift", async (req, res) => {
   const body = req.body as {
     userId?: unknown;
