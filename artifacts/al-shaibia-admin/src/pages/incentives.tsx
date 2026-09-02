@@ -84,10 +84,12 @@ interface CouponResponse {
 }
 
 interface GiftedSpin {
-  id: string;
   userId: string;
-  usedAt: string | null;
-  createdAt: string;
+  totalCount: number;
+  availableCount: number;
+  usedCount: number;
+  firstGiftedAt: string;
+  lastGiftedAt: string;
   owner: { name: string | null; phone: string | null };
 }
 
@@ -166,7 +168,8 @@ export default function IncentivesPage() {
   const [giftedSpinPage, setGiftedSpinPage] = useState(0);
   const [giftedSpinsLoading, setGiftedSpinsLoading] = useState(true);
   const [spinToRevoke, setSpinToRevoke] = useState<GiftedSpin | null>(null);
-  const [revokingSpinId, setRevokingSpinId] = useState<string | null>(null);
+  const [spinRevokeQuantity, setSpinRevokeQuantity] = useState("1");
+  const [revokingSpinUserId, setRevokingSpinUserId] = useState<string | null>(null);
   const { toast } = useToast();
 
   async function loadSummary(background = false) {
@@ -355,13 +358,25 @@ export default function IncentivesPage() {
 
   async function revokeGiftedSpin() {
     if (!spinToRevoke) return;
+    const quantity = Number(spinRevokeQuantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > spinToRevoke.availableCount) {
+      toast({
+        title: "عدد غير صحيح",
+        description: `أدخل عدداً صحيحاً بين 1 و${spinToRevoke.availableCount}.`,
+        variant: "destructive",
+      });
+      return;
+    }
 
-    setRevokingSpinId(spinToRevoke.id);
+    setRevokingSpinUserId(spinToRevoke.userId);
     try {
-      await api.delete(`/incentives/spins/${encodeURIComponent(spinToRevoke.id)}`);
+      await api.post("/incentives/spins/revoke", {
+        userId: spinToRevoke.userId,
+        quantity,
+      });
       toast({
         title: "تم سحب اللفة",
-        description: "تم حذف اللفة المهداة من حساب المستخدم.",
+        description: `تم سحب ${quantity} ${quantity === 1 ? "لفة" : "لفات"} من حساب المستخدم.`,
       });
       setSpinToRevoke(null);
       await Promise.all([loadGiftedSpins(true), loadSummary(true)]);
@@ -372,8 +387,13 @@ export default function IncentivesPage() {
         variant: "destructive",
       });
     } finally {
-      setRevokingSpinId(null);
+      setRevokingSpinUserId(null);
     }
+  }
+
+  function openSpinRevokeDialog(spin: GiftedSpin) {
+    setSpinRevokeQuantity("1");
+    setSpinToRevoke(spin);
   }
 
   const visibleGiftUsers = giftUsers.filter((user) => {
@@ -513,7 +533,7 @@ export default function IncentivesPage() {
         <div>
           <h2 className="text-xl font-semibold">اللفات المهداة</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            اضغط بزر الفأرة الأيمن على اللفة المهداة لسحبها. لا يمكن سحب اللفات الفائزة من العجلة أو اللفات المستخدمة.
+            يظهر كل حساب مرة واحدة. اضغط بزر الفأرة الأيمن على الحساب لسحب عدد من لفاته المهداة المتاحة.
           </p>
         </div>
         <Card>
@@ -522,35 +542,37 @@ export default function IncentivesPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50">
-                    <TableHead>صاحب اللفة</TableHead>
-                    <TableHead>الحالة</TableHead>
-                    <TableHead>تاريخ الإهداء</TableHead>
+                    <TableHead>صاحب الحساب</TableHead>
+                    <TableHead>اللفات المتاحة</TableHead>
+                    <TableHead>اللفات المستخدمة</TableHead>
+                    <TableHead>الإجمالي</TableHead>
+                    <TableHead>آخر إهداء</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {giftedSpinsLoading ? (
                     Array.from({ length: 3 }).map((_, index) => (
                       <TableRow key={index}>
-                        {Array.from({ length: 3 }).map((__, cell) => (
+                        {Array.from({ length: 5 }).map((__, cell) => (
                           <TableCell key={cell}><Skeleton className="h-5 w-24" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : giftedSpins.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                         لا توجد لفات مهداة بعد.
                       </TableCell>
                     </TableRow>
                   ) : giftedSpins.map((spin) => (
-                    <GiftedSpinRow key={spin.id} spin={spin} onRevoke={setSpinToRevoke} />
+                    <GiftedSpinRow key={spin.userId} spin={spin} onRevoke={openSpinRevokeDialog} />
                   ))}
                 </TableBody>
               </Table>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-              <span>إجمالي اللفات المهداة: {giftedSpinCount}</span>
+              <span>إجمالي الحسابات المهداة: {giftedSpinCount}</span>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -890,25 +912,38 @@ export default function IncentivesPage() {
       <AlertDialog
         open={spinToRevoke !== null}
         onOpenChange={(open) => {
-          if (!open && !revokingSpinId) setSpinToRevoke(null);
+          if (!open && !revokingSpinUserId) setSpinToRevoke(null);
         }}
       >
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader className="text-right">
             <AlertDialogTitle>سحب اللفة المهداة؟</AlertDialogTitle>
             <AlertDialogDescription>
-              سيتم حذف لفة واحدة من حساب{" "}
+              سيتم سحب العدد الذي تدخله من أصل {spinToRevoke?.availableCount ?? 0} لفة متاحة لحساب{" "}
               {spinToRevoke?.owner.name || "المستخدم"}. لا يمكن التراجع عن هذا الإجراء.
             </AlertDialogDescription>
+            <div className="space-y-2 text-right">
+              <Label htmlFor="spin-revoke-quantity">عدد اللفات المراد سحبها</Label>
+              <Input
+                id="spin-revoke-quantity"
+                type="number"
+                min={1}
+                max={spinToRevoke?.availableCount ?? 1}
+                step={1}
+                value={spinRevokeQuantity}
+                onChange={(event) => setSpinRevokeQuantity(event.target.value)}
+                autoFocus
+              />
+            </div>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={revokingSpinId !== null}>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel disabled={revokingSpinUserId !== null}>إلغاء</AlertDialogCancel>
             <AlertDialogAction
               onClick={revokeGiftedSpin}
-              disabled={revokingSpinId !== null}
+              disabled={revokingSpinUserId !== null}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {revokingSpinId ? "جارٍ السحب…" : "سحب اللفة"}
+              {revokingSpinUserId ? "جارٍ السحب…" : "سحب العدد"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -931,13 +966,11 @@ function GiftedSpinRow({
         <div className="text-xs text-muted-foreground">{spin.owner.phone || "—"}</div>
       </TableCell>
       <TableCell>
-        <Badge variant="outline" className={spin.usedAt ? "border-emerald-500/30 text-emerald-400" : "border-blue-500/30 text-blue-400"}>
-          {spin.usedAt ? "مستخدمة" : "متاحة"}
-        </Badge>
+        <Badge variant="outline" className="border-blue-500/30 text-blue-400">{spin.availableCount}</Badge>
       </TableCell>
-      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-        {dateLabel(spin.createdAt)}
-      </TableCell>
+      <TableCell><Badge variant="outline" className="border-emerald-500/30 text-emerald-400">{spin.usedCount}</Badge></TableCell>
+      <TableCell className="font-semibold">{spin.totalCount}</TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{dateLabel(spin.lastGiftedAt)}</TableCell>
     </TableRow>
   );
 
@@ -946,12 +979,12 @@ function GiftedSpinRow({
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent className="text-right">
         <ContextMenuItem
-          disabled={spin.usedAt !== null}
+          disabled={spin.availableCount === 0}
           onSelect={() => onRevoke(spin)}
           className="gap-2 text-destructive focus:text-destructive"
         >
           <Trash2 className="h-4 w-4" />
-          {spin.usedAt ? "لا يمكن سحب لفة مستخدمة" : "سحب اللفة المهداة"}
+          {spin.availableCount === 0 ? "لا توجد لفات متاحة للسحب" : "سحب عدد من اللفات المهداة"}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

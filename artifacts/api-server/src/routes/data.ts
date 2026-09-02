@@ -1927,29 +1927,34 @@ router.get("/incentives/gifted-spins", async (req, res) => {
     const pool = getSupabasePool();
     const [countResult, rowsResult] = await Promise.all([
       pool.query<{ count: number }>(
-        `SELECT COUNT(*)::int AS count
+        `SELECT COUNT(DISTINCT user_id)::int AS count
          FROM public.wheel_spins
          WHERE source = 'admin_gift'`,
       ),
       pool.query<{
-        id: string;
         user_id: string;
-        used_at: string | null;
-        created_at: string;
+        total_count: number;
+        available_count: number;
+        used_count: number;
+        first_gifted_at: string;
+        last_gifted_at: string;
         owner_name: string | null;
         owner_phone: string | null;
       }>(
         `SELECT
-           ws.id,
            ws.user_id,
-           ws.used_at,
-           ws.created_at,
+           COUNT(*)::int AS total_count,
+           COUNT(*) FILTER (WHERE ws.used_at IS NULL)::int AS available_count,
+           COUNT(*) FILTER (WHERE ws.used_at IS NOT NULL)::int AS used_count,
+           MIN(ws.created_at) AS first_gifted_at,
+           MAX(ws.created_at) AS last_gifted_at,
            u.name AS owner_name,
            u.phone AS owner_phone
          FROM public.wheel_spins ws
          LEFT JOIN public.users u ON u.id = ws.user_id
          WHERE ws.source = 'admin_gift'
-         ORDER BY ws.created_at DESC
+         GROUP BY ws.user_id, u.name, u.phone
+         ORDER BY MAX(ws.created_at) DESC
          LIMIT $1 OFFSET $2`,
         [pageSize, page * pageSize],
       ),
@@ -1957,18 +1962,115 @@ router.get("/incentives/gifted-spins", async (req, res) => {
 
     res.json({
       data: rowsResult.rows.map((row) => ({
-        id: row.id,
         userId: row.user_id,
-        usedAt: row.used_at,
-        createdAt: row.created_at,
+        totalCount: row.total_count,
+        availableCount: row.available_count,
+        usedCount: row.used_count,
+        firstGiftedAt: row.first_gifted_at,
+        lastGiftedAt: row.last_gifted_at,
         owner: { name: row.owner_name, phone: row.owner_phone },
       })),
-      count: countResult.rows[0]?.count ?? 0,
+      count: countResult.rows.reduce((sum, row) => sum + Number(row.count), 0),
       page,
       pageSize,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/incentives/spins/revoke", async (req, res) => {
+  const body = req.body as { userId?: unknown; quantity?: unknown };
+  const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+  const quantity = typeof body.quantity === "number"
+    ? body.quantity
+    : typeof body.quantity === "string"
+      ? Number(body.quantity)
+      : NaN;
+
+  if (!userId || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+    res.status(400).json({ error: "أدخل حساباً وعدداً صحيحاً بين 1 و1000" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const deleted = await client.query<{ id: string; user_id: string }>(
+      `WITH eligible AS (
+         SELECT id
+         FROM public.wheel_spins
+         WHERE user_id = $1
+           AND source = 'admin_gift'
+           AND used_at IS NULL
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2::int
+         FOR UPDATE SKIP LOCKED
+       ),
+       enough AS (
+         SELECT COUNT(*) AS matched
+         FROM eligible
+         HAVING COUNT(*) = $2::bigint
+       )
+       DELETE FROM public.wheel_spins ws
+       USING eligible, enough
+       WHERE ws.id = eligible.id
+       RETURNING ws.id, ws.user_id`,
+      [userId, quantity],
+    );
+
+    if (deleted.rowCount !== quantity) {
+      const existing = await client.query<{
+        gifted_count: number;
+        available_count: number;
+        used_count: number;
+        wheel_count: number;
+      }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE source = 'admin_gift')::int AS gifted_count,
+           COUNT(*) FILTER (WHERE source = 'admin_gift' AND used_at IS NULL)::int AS available_count,
+           COUNT(*) FILTER (WHERE source = 'admin_gift' AND used_at IS NOT NULL)::int AS used_count,
+           COUNT(*) FILTER (WHERE source <> 'admin_gift')::int AS wheel_count
+         FROM public.wheel_spins
+         WHERE user_id = $1`,
+        [userId],
+      );
+      await client.query("ROLLBACK");
+
+      const counts = existing.rows[0];
+      if (!counts || Number(counts.gifted_count) === 0) {
+        if (Number(counts?.wheel_count ?? 0) > 0) {
+          res.status(403).json({ error: "لا يمكن سحب لفات الفوز من العجلة" });
+        } else {
+          res.status(404).json({ error: "لا توجد لفات مهداة لهذا الحساب" });
+        }
+      } else if (Number(counts.available_count) < quantity) {
+        res.status(409).json({
+          error: `عدد اللفات المتاحة للسحب هو ${counts.available_count} فقط`,
+        });
+      } else {
+        res.status(409).json({ error: "تعذر سحب اللفات، حاول مرة أخرى" });
+      }
+      return;
+    }
+
+    await client.query("COMMIT");
+
+    await logAdminAction(req, "revoke", "wheel_spins", userId, {
+      userId,
+      quantity,
+      source: "admin_gift",
+    });
+
+    res.json({ ok: true, userId, quantity });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[INCENTIVES SPINS REVOKE] FAILED", "| user_id:", userId, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
   }
 });
 
