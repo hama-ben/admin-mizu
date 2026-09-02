@@ -24,11 +24,12 @@ interface DriverAppeal {
   driver: User | null;
 }
 
-type ScopeFilter = "all" | "pending" | "banned" | "expired" | "rejected";
+type ScopeFilter = "all" | "pending" | "accepted" | "banned" | "expired" | "rejected";
 
 const SCOPE_LABELS: Record<ScopeFilter, string> = {
   all: "كل الطعون",
   pending: "قيد المراجعة",
+  accepted: "المقبولة والمفعّلة",
   banned: "المحظورة",
   expired: "المنتهية",
   rejected: "المرفوضة",
@@ -46,6 +47,7 @@ function getScope(driver: User | null): Exclude<ScopeFilter, "all" | "pending"> 
   if (driver.account_status === "banned") return "banned";
   if (driver.account_status === "rejected") return "rejected";
   if (isExpired(driver)) return "expired";
+  if (driver.account_status === "approved") return "accepted";
   return "other";
 }
 
@@ -53,6 +55,7 @@ function scopeClass(scope: ReturnType<typeof getScope>): string {
   if (scope === "banned") return "bg-zinc-700/40 text-zinc-300 border-zinc-500/30";
   if (scope === "expired") return "bg-orange-500/10 text-orange-400 border-orange-500/20";
   if (scope === "rejected") return "bg-red-500/10 text-red-400 border-red-500/20";
+  if (scope === "accepted") return "bg-green-500/10 text-green-400 border-green-500/20";
   return "bg-slate-500/10 text-slate-400 border-slate-500/20";
 }
 
@@ -60,6 +63,7 @@ function scopeLabel(scope: ReturnType<typeof getScope>): string {
   if (scope === "banned") return "حساب محظور";
   if (scope === "expired") return "حساب منتهي";
   if (scope === "rejected") return "طلب مرفوض";
+  if (scope === "accepted") return "حساب مقبول ومفعّل";
   return "حساب آخر";
 }
 
@@ -199,7 +203,7 @@ export default function AppealsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">الطعون</h1>
           <p className="text-muted-foreground mt-2">
-            مراجعة طعون السائقين المرفوضين والمحظورين والحسابات المنتهية — {loading ? "…" : `${appeals.length} طعن`}.
+            مراجعة طعون السائقين، مع الاحتفاظ بالحسابات المقبولة والمفعّلة في سجل الطعون — {loading ? "…" : `${appeals.length} طعن`}.
           </p>
         </div>
         <Link href="/banned-drivers">
