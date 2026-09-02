@@ -1626,6 +1626,7 @@ router.get("/incentives/summary", async (_req, res) => {
       }>(
         `SELECT result_percentage, COUNT(*)::int AS spin_count
          FROM public.wheel_spins
+         WHERE used_at IS NOT NULL
          GROUP BY result_percentage`,
       ),
       getMonthlyCouponCost(),
@@ -1675,6 +1676,203 @@ router.get("/incentives/summary", async (_req, res) => {
     res.json({ totalSpins, distribution, couponCost: cost });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incentives/gift-users", async (req, res) => {
+  try {
+    const search = String((req.query as Record<string, unknown>).search ?? "").trim();
+    const params: unknown[] = [];
+    const where = [`u.user_type IN ('سائق', 'مستهلك')`];
+
+    if (search) {
+      const escaped = search.replace(/[\\%_]/g, "\\$&");
+      params.push(`%${escaped}%`);
+      where.push(`(u.name ILIKE $${params.length} ESCAPE '\\' OR u.phone ILIKE $${params.length} ESCAPE '\\')`);
+    }
+
+    const result = await getSupabasePool().query<{
+      id: string;
+      name: string;
+      phone: string | null;
+      user_type: string;
+    }>(
+      `SELECT u.id, u.name, u.phone, u.user_type
+       FROM public.users u
+       WHERE ${where.join(" AND ")}
+       ORDER BY u.name ASC NULLS LAST, u.phone ASC NULLS LAST
+       LIMIT 5000`,
+      params,
+    );
+
+    res.json({
+      data: result.rows.map((user) => ({
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        userType: user.user_type,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/incentives/gift-coupon-types", async (_req, res) => {
+  try {
+    const result = await getSupabasePool().query<{
+      id: string;
+      discount_percentage: number;
+      max_discount_amount: number | null;
+      total_count: number;
+      available_count: number;
+    }>(
+      `SELECT DISTINCT ON (c.discount_percentage, c.max_discount_amount)
+         c.id::text,
+         c.discount_percentage,
+         c.max_discount_amount,
+         COUNT(*) OVER (
+           PARTITION BY c.discount_percentage, c.max_discount_amount
+         )::int AS total_count,
+         COUNT(*) FILTER (
+           WHERE c.used_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at > NOW())
+         ) OVER (
+           PARTITION BY c.discount_percentage, c.max_discount_amount
+         )::int AS available_count
+       FROM public.coupons c
+       ORDER BY
+         c.discount_percentage DESC,
+         c.max_discount_amount NULLS LAST,
+         (c.used_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > NOW())) DESC,
+         c.won_at DESC
+       LIMIT 50`,
+    );
+
+    res.json({
+      data: result.rows.map((coupon) => ({
+        id: coupon.id,
+        discountPercentage: coupon.discount_percentage,
+        maxDiscountAmount: coupon.max_discount_amount,
+        totalCount: coupon.total_count,
+        availableCount: coupon.available_count,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/incentives/gift", async (req, res) => {
+  const body = req.body as {
+    userId?: unknown;
+    giftType?: unknown;
+    quantity?: unknown;
+    couponTemplateId?: unknown;
+  };
+  const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+  const giftType = body.giftType === "spins" || body.giftType === "coupon" ? body.giftType : null;
+  const quantity = typeof body.quantity === "number"
+    ? body.quantity
+    : typeof body.quantity === "string"
+      ? Number(body.quantity)
+      : NaN;
+  const couponTemplateId = typeof body.couponTemplateId === "string" ? body.couponTemplateId.trim() : "";
+
+  if (!userId || !giftType || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+    res.status(400).json({ error: "بيانات الإهداء غير صحيحة" });
+    return;
+  }
+  if (giftType === "coupon" && !couponTemplateId) {
+    res.status(400).json({ error: "اختر نوع القسيمة أولاً" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const userResult = await client.query<{ id: string; user_type: string }>(
+      `SELECT id, user_type
+       FROM public.users
+       WHERE id = $1
+         AND user_type IN ('سائق', 'مستهلك')
+       FOR UPDATE`,
+      [userId],
+    );
+    const user = userResult.rows[0];
+    if (!user) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "المستخدم غير موجود" });
+      return;
+    }
+
+    let discountPercentage: number | null = null;
+    if (giftType === "spins") {
+      const insertResult = await client.query(
+        `INSERT INTO public.wheel_spins (user_id, source, used_at, result_percentage)
+         SELECT $1, 'admin_gift', NULL, NULL
+         FROM generate_series(1, $2::int)`,
+        [userId, quantity],
+      );
+      if ((insertResult.rowCount ?? 0) !== quantity) {
+        throw new Error("تعذر إنشاء اللفات المهداة كاملة");
+      }
+    } else {
+      const templateResult = await client.query<{
+        discount_percentage: number;
+        max_discount_amount: number | null;
+      }>(
+        `SELECT discount_percentage, max_discount_amount
+         FROM public.coupons
+         WHERE id = $1
+         FOR SHARE`,
+        [couponTemplateId],
+      );
+      const template = templateResult.rows[0];
+      if (!template) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "نوع القسيمة غير موجود" });
+        return;
+      }
+      discountPercentage = template.discount_percentage;
+
+      const insertResult = await client.query(
+        `INSERT INTO public.coupons
+           (user_id, discount_percentage, max_discount_amount, won_at, activation_trigger_at, expires_at)
+         SELECT $1, c.discount_percentage, c.max_discount_amount, NOW(), NOW(), NOW() + INTERVAL '30 days'
+         FROM public.coupons c
+         CROSS JOIN generate_series(1, $2::int)
+         WHERE c.id = $3`,
+        [userId, quantity, couponTemplateId],
+      );
+      if ((insertResult.rowCount ?? 0) !== quantity) {
+        throw new Error("تعذر إنشاء القسائم المهداة كاملة");
+      }
+    }
+
+    await client.query("COMMIT");
+
+    await logAdminAction(req, "gift", giftType === "spins" ? "wheel_spins" : "coupon", userId, {
+      userId,
+      quantity,
+      discountPercentage,
+      couponTemplateId: giftType === "coupon" ? couponTemplateId : null,
+    });
+
+    res.json({
+      ok: true,
+      giftType,
+      quantity,
+      discountPercentage,
+    });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[INCENTIVES GIFT] FAILED", "| user_id:", userId, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
   }
 });
 

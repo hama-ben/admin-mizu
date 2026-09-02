@@ -8,6 +8,7 @@ import {
   Percent,
   RefreshCw,
   Search,
+  Send,
   TicketPercent,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -17,7 +18,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -75,6 +79,21 @@ interface CouponResponse {
   pageSize: number;
 }
 
+interface GiftUser {
+  id: string;
+  name: string;
+  phone: string | null;
+  userType: string;
+}
+
+interface GiftCouponType {
+  id: string;
+  discountPercentage: number;
+  maxDiscountAmount: number | null;
+  totalCount: number;
+  availableCount: number;
+}
+
 const STATUS_LABELS: Record<CouponStatus, string> = {
   pending_activation: "بانتظار التفعيل",
   active: "نشطة",
@@ -112,6 +131,17 @@ export default function IncentivesPage() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [couponsLoading, setCouponsLoading] = useState(true);
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftUsers, setGiftUsers] = useState<GiftUser[]>([]);
+  const [giftCouponTypes, setGiftCouponTypes] = useState<GiftCouponType[]>([]);
+  const [giftUsersLoading, setGiftUsersLoading] = useState(false);
+  const [giftOptionsLoading, setGiftOptionsLoading] = useState(false);
+  const [giftSubmitting, setGiftSubmitting] = useState(false);
+  const [giftUserSearch, setGiftUserSearch] = useState("");
+  const [selectedGiftUser, setSelectedGiftUser] = useState("");
+  const [giftType, setGiftType] = useState<"spins" | "coupon">("spins");
+  const [giftQuantity, setGiftQuantity] = useState("1");
+  const [selectedCouponTemplate, setSelectedCouponTemplate] = useState("");
   const { toast } = useToast();
 
   async function loadSummary(background = false) {
@@ -173,6 +203,82 @@ export default function IncentivesPage() {
     setPage(0);
   }
 
+  async function openGiftDialog() {
+    setGiftOpen(true);
+    setGiftUsersLoading(true);
+    setGiftOptionsLoading(true);
+    try {
+      const [usersResult, couponTypesResult] = await Promise.all([
+        api.get<{ data: GiftUser[] }>("/incentives/gift-users"),
+        api.get<{ data: GiftCouponType[] }>("/incentives/gift-coupon-types"),
+      ]);
+      setGiftUsers(usersResult.data ?? []);
+      setGiftCouponTypes(couponTypesResult.data ?? []);
+    } catch (error: any) {
+      toast({
+        title: "تعذر تحميل قائمة الإهداء",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setGiftUsersLoading(false);
+      setGiftOptionsLoading(false);
+    }
+  }
+
+  async function submitGift() {
+    const quantity = Number(giftQuantity);
+    if (!selectedGiftUser || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+      toast({
+        title: "أكمل بيانات الإهداء",
+        description: "اختر مستخدماً وأدخل عدداً صحيحاً بين 1 و1000.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (giftType === "coupon" && !selectedCouponTemplate) {
+      toast({
+        title: "اختر القسيمة",
+        description: "اختر نوع القسيمة التي تريد إرسالها.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setGiftSubmitting(true);
+    try {
+      await api.post("/incentives/gift", {
+        userId: selectedGiftUser,
+        giftType,
+        quantity,
+        couponTemplateId: giftType === "coupon" ? selectedCouponTemplate : undefined,
+      });
+      const selectedUser = giftUsers.find((user) => user.id === selectedGiftUser);
+      toast({
+        title: "تم الإهداء بنجاح",
+        description: `تم إرسال ${quantity} ${giftType === "spins" ? "لفة" : "قسيمة"} إلى ${selectedUser?.name ?? "المستخدم"}.`,
+      });
+      setGiftOpen(false);
+      setGiftQuantity("1");
+      setSelectedGiftUser("");
+      setSelectedCouponTemplate("");
+      loadSummary(true);
+      loadCoupons(true);
+    } catch (error: any) {
+      toast({
+        title: "تعذر إتمام الإهداء",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setGiftSubmitting(false);
+    }
+  }
+
+  const visibleGiftUsers = giftUsers.filter((user) => {
+    const query = giftUserSearch.trim().toLocaleLowerCase();
+    return !query || `${user.name} ${user.phone ?? ""}`.toLocaleLowerCase().includes(query);
+  });
   const maxCouponPages = Math.max(1, Math.ceil(couponCount / 25));
   const totalSpins = summary?.totalSpins ?? 0;
   const monthlyCost = summary?.couponCost.monthlyCostDzd ?? 0;
@@ -189,18 +295,24 @@ export default function IncentivesPage() {
             راقب توزيع النتائج والتكلفة الفعلية للقسائم المستخدمة.
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={() => {
-            loadSummary();
-            loadCoupons();
-          }}
-          disabled={loading || couponsLoading}
-        >
-          <RefreshCw className={(loading || couponsLoading) ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-          تحديث
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="gap-2" onClick={openGiftDialog}>
+            <Send className="h-4 w-4" />
+            إهداء
+          </Button>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => {
+              loadSummary();
+              loadCoupons();
+            }}
+            disabled={loading || couponsLoading}
+          >
+            <RefreshCw className={(loading || couponsLoading) ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            تحديث
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -469,6 +581,136 @@ export default function IncentivesPage() {
           </CardContent>
         </Card>
       </section>
+
+      <Dialog open={giftOpen} onOpenChange={setGiftOpen}>
+        <DialogContent dir="rtl" className="max-w-2xl">
+          <DialogHeader className="text-right">
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5 text-primary" />
+              إهداء لفات أو قسائم
+            </DialogTitle>
+            <DialogDescription>
+              اختر المستخدم ثم حدد نوع الهدية والعدد المراد إرساله.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="gift-user-search">المستخدمون (السائقون والمستهلكون)</Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="gift-user-search"
+                  value={giftUserSearch}
+                  onChange={(event) => setGiftUserSearch(event.target.value)}
+                  placeholder="ابحث بالاسم أو الهاتف…"
+                  className="pr-9"
+                />
+              </div>
+              <div className="max-h-56 overflow-y-auto rounded-md border">
+                {giftUsersLoading ? (
+                  <div className="space-y-3 p-4">
+                    {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}
+                  </div>
+                ) : visibleGiftUsers.length === 0 ? (
+                  <p className="p-6 text-center text-sm text-muted-foreground">لا يوجد مستخدمون مطابقون.</p>
+                ) : (
+                  <RadioGroup value={selectedGiftUser} onValueChange={setSelectedGiftUser} className="gap-0">
+                    {visibleGiftUsers.map((user) => (
+                      <Label
+                        key={user.id}
+                        htmlFor={`gift-user-${user.id}`}
+                        className="flex cursor-pointer items-center gap-3 border-b p-3 last:border-b-0 hover:bg-muted/40"
+                      >
+                        <RadioGroupItem value={user.id} id={`gift-user-${user.id}`} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{user.name || "بدون اسم"}</span>
+                          <span className="block text-xs text-muted-foreground">{user.phone || "بدون هاتف"}</span>
+                        </span>
+                        <Badge variant="outline" className={user.userType === "سائق" ? "text-blue-400" : "text-purple-400"}>
+                          {user.userType}
+                        </Badge>
+                      </Label>
+                    ))}
+                  </RadioGroup>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>نوع الإهداء</Label>
+                <RadioGroup
+                  value={giftType}
+                  onValueChange={(value) => setGiftType(value as "spins" | "coupon")}
+                  className="grid grid-cols-2 gap-2"
+                >
+                  <Label htmlFor="gift-type-spins" className="flex cursor-pointer items-center gap-2 rounded-md border p-3 hover:bg-muted/40">
+                    <RadioGroupItem value="spins" id="gift-type-spins" />
+                    <span>إرسال اللفات</span>
+                  </Label>
+                  <Label htmlFor="gift-type-coupon" className="flex cursor-pointer items-center gap-2 rounded-md border p-3 hover:bg-muted/40">
+                    <RadioGroupItem value="coupon" id="gift-type-coupon" />
+                    <span>إرسال القسيمة</span>
+                  </Label>
+                </RadioGroup>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gift-quantity">العدد</Label>
+                <Input
+                  id="gift-quantity"
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={giftQuantity}
+                  onChange={(event) => setGiftQuantity(event.target.value)}
+                />
+              </div>
+            </div>
+
+            {giftType === "coupon" && (
+              <div className="space-y-2">
+                <Label>القسائم الموجودة</Label>
+                {giftOptionsLoading ? (
+                  <Skeleton className="h-11 w-full" />
+                ) : giftCouponTypes.length === 0 ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-300">
+                    لا توجد قسائم موجودة يمكن استخدامها كنموذج.
+                  </div>
+                ) : (
+                  <RadioGroup value={selectedCouponTemplate} onValueChange={setSelectedCouponTemplate} className="grid gap-2 sm:grid-cols-2">
+                    {giftCouponTypes.map((coupon) => (
+                      <Label
+                        key={coupon.id}
+                        htmlFor={`gift-coupon-${coupon.id}`}
+                        className="flex cursor-pointer items-center gap-3 rounded-md border p-3 hover:bg-muted/40"
+                      >
+                        <RadioGroupItem value={coupon.id} id={`gift-coupon-${coupon.id}`} />
+                        <span className="flex-1">
+                          <span className="block font-medium">خصم {coupon.discountPercentage}%</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {coupon.maxDiscountAmount === null ? "بلا سقف" : `سقف ${formatDZD(coupon.maxDiscountAmount)}`}
+                            {" • "}
+                            {coupon.availableCount} متاحة
+                          </span>
+                        </span>
+                      </Label>
+                    ))}
+                  </RadioGroup>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setGiftOpen(false)} disabled={giftSubmitting}>إلغاء</Button>
+              <Button onClick={submitGift} disabled={giftSubmitting || giftUsersLoading || giftOptionsLoading}>
+                {giftSubmitting ? "جارٍ الإرسال…" : "إرسال الهدية"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
