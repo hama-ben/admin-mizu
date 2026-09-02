@@ -1886,8 +1886,8 @@ router.post("/incentives/gift", async (req, res) => {
 
       const insertResult = await client.query(
         `INSERT INTO public.coupons
-           (user_id, discount_percentage, max_discount_amount, won_at, activation_trigger_at, expires_at)
-         SELECT $1, $2, $3, NOW(), NOW(), NOW() + INTERVAL '30 days'
+           (user_id, discount_percentage, max_discount_amount, won_at, activation_trigger_at, expires_at, source)
+         SELECT $1, $2, $3, NOW(), NOW(), NOW() + INTERVAL '30 days', 'admin_gift'
          FROM generate_series(1, $4::int)`,
         [userId, couponType.discountPercentage, couponType.maxDiscountAmount, quantity],
       );
@@ -1914,6 +1914,75 @@ router.post("/incentives/gift", async (req, res) => {
   } catch (err: any) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("[INCENTIVES GIFT] FAILED", "| user_id:", userId, "| error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
+  }
+});
+
+router.delete("/incentives/coupons/:id", async (req, res) => {
+  const couponId = String(req.params.id ?? "").trim();
+  if (!couponId) {
+    res.status(400).json({ error: "معرّف القسيمة غير صحيح" });
+    return;
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getSupabasePool().connect();
+    await client.query("BEGIN");
+
+    const deleted = await client.query<{
+      id: string;
+      user_id: string;
+      discount_percentage: number;
+    }>(
+      `DELETE FROM public.coupons
+       WHERE id = $1
+         AND source = 'admin_gift'
+         AND used_at IS NULL
+       RETURNING id, user_id, discount_percentage`,
+      [couponId],
+    );
+
+    if (deleted.rowCount !== 1) {
+      const existing = await client.query<{
+        source: string;
+        used_at: string | null;
+      }>(
+        `SELECT source, used_at
+         FROM public.coupons
+         WHERE id = $1`,
+        [couponId],
+      );
+      await client.query("ROLLBACK");
+
+      const coupon = existing.rows[0];
+      if (!coupon) {
+        res.status(404).json({ error: "القسيمة غير موجودة" });
+      } else if (coupon.source !== "admin_gift") {
+        res.status(403).json({ error: "لا يمكن سحب قسائم الفوز من العجلة" });
+      } else if (coupon.used_at) {
+        res.status(409).json({ error: "لا يمكن سحب قسيمة تم استخدامها" });
+      } else {
+        res.status(409).json({ error: "تعذر سحب القسيمة" });
+      }
+      return;
+    }
+
+    await client.query("COMMIT");
+
+    const coupon = deleted.rows[0];
+    await logAdminAction(req, "revoke", "coupon", couponId, {
+      userId: coupon.user_id,
+      discountPercentage: coupon.discount_percentage,
+      source: "admin_gift",
+    });
+
+    res.json({ ok: true, couponId });
+  } catch (err: any) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("[INCENTIVES COUPON REVOKE] FAILED", "| coupon_id:", couponId, "| error:", err.message);
     res.status(500).json({ error: err.message });
   } finally {
     client?.release();
@@ -1977,6 +2046,7 @@ router.get("/incentives/coupons", async (req, res) => {
       expires_at: string | null;
       used_at: string | null;
       applied_to_payment_id: string | null;
+      source: "wheel" | "admin_gift";
       coupon_status: CouponStatus;
       owner_name: string | null;
       owner_phone: string | null;
@@ -1992,6 +2062,7 @@ router.get("/incentives/coupons", async (req, res) => {
          c.expires_at,
          c.used_at,
          c.applied_to_payment_id,
+         c.source,
          ${COUPON_STATUS_SQL} AS coupon_status,
          u.name AS owner_name,
          u.phone AS owner_phone
@@ -2014,6 +2085,7 @@ router.get("/incentives/coupons", async (req, res) => {
         expiresAt: row.expires_at,
         usedAt: row.used_at,
         appliedToPaymentId: row.applied_to_payment_id,
+        source: row.source,
         status: row.coupon_status,
         owner: { name: row.owner_name, phone: row.owner_phone },
       })),

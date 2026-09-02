@@ -36,4 +36,5 @@ export const api = {
     req<T>(path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   post: <T>(path: string, body: unknown = {}) =>
     req<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  delete: <T>(path: string) => req<T>(path, { method: "DELETE" }),
 };

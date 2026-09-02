@@ -10,6 +10,7 @@ import {
   Search,
   Send,
   TicketPercent,
+  Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatDate, formatDZD } from "@/lib/constants";
@@ -18,6 +19,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,6 +71,7 @@ interface Coupon {
   expiresAt: string | null;
   usedAt: string | null;
   appliedToPaymentId: string | null;
+  source: "wheel" | "admin_gift";
   status: CouponStatus;
   owner: { name: string | null; phone: string | null };
 }
@@ -140,6 +144,8 @@ export default function IncentivesPage() {
   const [giftType, setGiftType] = useState<"spins" | "coupon">("spins");
   const [giftQuantity, setGiftQuantity] = useState("1");
   const [selectedCouponTemplate, setSelectedCouponTemplate] = useState("");
+  const [couponToRevoke, setCouponToRevoke] = useState<Coupon | null>(null);
+  const [revokingCouponId, setRevokingCouponId] = useState<string | null>(null);
   const { toast } = useToast();
 
   async function loadSummary(background = false) {
@@ -270,6 +276,29 @@ export default function IncentivesPage() {
       });
     } finally {
       setGiftSubmitting(false);
+    }
+  }
+
+  async function revokeGiftedCoupon() {
+    if (!couponToRevoke || couponToRevoke.source !== "admin_gift") return;
+
+    setRevokingCouponId(couponToRevoke.id);
+    try {
+      await api.delete(`/incentives/coupons/${encodeURIComponent(couponToRevoke.id)}`);
+      toast({
+        title: "تم سحب القسيمة",
+        description: "تم حذف القسيمة المهداة من حساب المستخدم.",
+      });
+      setCouponToRevoke(null);
+      await Promise.all([loadCoupons(true), loadSummary(true)]);
+    } catch (error: any) {
+      toast({
+        title: "تعذر سحب القسيمة",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setRevokingCouponId(null);
     }
   }
 
@@ -461,7 +490,9 @@ export default function IncentivesPage() {
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-semibold">قائمة القسائم</h2>
-          <p className="mt-1 text-sm text-muted-foreground">بحث بالاسم أو الهاتف، مع حالة مشتقة من تواريخ القسيمة.</p>
+           <p className="mt-1 text-sm text-muted-foreground">
+             بحث بالاسم أو الهاتف، مع حالة ومصدر القسيمة. اضغط بزر الفأرة الأيمن على القسائم المهداة لسحبها.
+           </p>
         </div>
         <Card>
           <CardContent className="space-y-4 p-5">
@@ -505,6 +536,7 @@ export default function IncentivesPage() {
                     <TableHead>صاحب القسيمة</TableHead>
                     <TableHead>النسبة</TableHead>
                     <TableHead>الحالة</TableHead>
+                   <TableHead>المصدر</TableHead>
                     <TableHead>القيمة الفعلية</TableHead>
                     <TableHead>تاريخ الفوز</TableHead>
                     <TableHead>تاريخ الانتهاء</TableHead>
@@ -514,41 +546,19 @@ export default function IncentivesPage() {
                   {couponsLoading ? (
                     Array.from({ length: 5 }).map((_, index) => (
                       <TableRow key={index}>
-                        {Array.from({ length: 6 }).map((__, cell) => (
+                         {Array.from({ length: 7 }).map((__, cell) => (
                           <TableCell key={cell}><Skeleton className="h-5 w-24" /></TableCell>
                         ))}
                       </TableRow>
                     ))
                   ) : coupons.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
+                       <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
                         لا توجد قسائم تطابق الفلاتر الحالية.
                       </TableCell>
                     </TableRow>
                   ) : coupons.map((coupon) => (
-                    <TableRow key={coupon.id}>
-                      <TableCell>
-                        <div className="font-medium">{coupon.owner.name || "—"}</div>
-                        <div className="text-xs text-muted-foreground">{coupon.owner.phone || "—"}</div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="gap-1">
-                          <Percent className="h-3 w-3" /> {coupon.discountPercentage}%
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={STATUS_STYLES[coupon.status]}>
-                          {STATUS_LABELS[coupon.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{coupon.appliedAmountDzd === null ? "—" : formatDZD(coupon.appliedAmountDzd)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{dateLabel(coupon.wonAt)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <Clock3 className="h-3.5 w-3.5" /> {dateLabel(coupon.expiresAt)}
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                    <CouponRow key={coupon.id} coupon={coupon} onRevoke={setCouponToRevoke} />
                   ))}
                 </TableBody>
               </Table>
@@ -708,7 +718,94 @@ export default function IncentivesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={couponToRevoke !== null}
+        onOpenChange={(open) => {
+          if (!open && !revokingCouponId) setCouponToRevoke(null);
+        }}
+      >
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader className="text-right">
+            <AlertDialogTitle>سحب القسيمة المهداة؟</AlertDialogTitle>
+            <AlertDialogDescription>
+              سيتم حذف قسيمة الخصم {couponToRevoke?.discountPercentage}% من حساب{" "}
+              {couponToRevoke?.owner.name || "المستخدم"}. لا يمكن التراجع عن هذا الإجراء.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revokingCouponId !== null}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={revokeGiftedCoupon}
+              disabled={revokingCouponId !== null}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {revokingCouponId ? "جارٍ السحب…" : "سحب القسيمة"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+function CouponRow({
+  coupon,
+  onRevoke,
+}: {
+  coupon: Coupon;
+  onRevoke: (coupon: Coupon) => void;
+}) {
+  const row = (
+    <TableRow>
+      <TableCell>
+        <div className="font-medium">{coupon.owner.name || "—"}</div>
+        <div className="text-xs text-muted-foreground">{coupon.owner.phone || "—"}</div>
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline" className="gap-1">
+          <Percent className="h-3 w-3" /> {coupon.discountPercentage}%
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline" className={STATUS_STYLES[coupon.status]}>
+          {STATUS_LABELS[coupon.status]}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <Badge
+          variant="outline"
+          className={coupon.source === "admin_gift" ? "border-purple-500/30 text-purple-400" : "text-muted-foreground"}
+        >
+          {coupon.source === "admin_gift" ? "مهداة" : "من العجلة"}
+        </Badge>
+      </TableCell>
+      <TableCell>{coupon.appliedAmountDzd === null ? "—" : formatDZD(coupon.appliedAmountDzd)}</TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{dateLabel(coupon.wonAt)}</TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <Clock3 className="h-3.5 w-3.5" /> {dateLabel(coupon.expiresAt)}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+
+  if (coupon.source !== "admin_gift") return row;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="text-right">
+        <ContextMenuItem
+          disabled={coupon.usedAt !== null}
+          onSelect={() => onRevoke(coupon)}
+          className="gap-2 text-destructive focus:text-destructive"
+        >
+          <Trash2 className="h-4 w-4" />
+          {coupon.usedAt ? "لا يمكن سحب قسيمة مستخدمة" : "سحب القسيمة المهداة"}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
