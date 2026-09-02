@@ -14,8 +14,13 @@ interface ExpiredDriver extends User {
   pendingPayment?: SubscriptionPayment | null;
 }
 
-function daysAgo(isoDate: string): number {
-  return Math.floor((Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60 * 24));
+function expirationInfo(isoDate: string): { expired: boolean; days: number } {
+  const difference = new Date(isoDate).getTime() - Date.now();
+  const day = 1000 * 60 * 60 * 24;
+  if (difference <= 0) {
+    return { expired: true, days: Math.floor(Math.abs(difference) / day) };
+  }
+  return { expired: false, days: Math.ceil(difference / day) };
 }
 
 export default function ExpiredAccountsPage() {
@@ -27,13 +32,13 @@ export default function ExpiredAccountsPage() {
   async function fetchExpiredDrivers(isBackground = false) {
     if (!isBackground) setLoading(true);
     try {
-      const now = new Date().toISOString();
+      const withinNextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
       const { data: expired, error } = await supabase
         .from("users")
         .select("id, name, phone, email, wilaya, commune, account_status, user_type, subscription_expires_at, first_approval_granted, created_at")
         .eq("user_type", USER_TYPE_DRIVER)
         .eq("account_status", "approved")
-        .lt("subscription_expires_at", now)
+        .lte("subscription_expires_at", withinNextWeek)
         .order("subscription_expires_at", { ascending: true });
 
       if (error) throw error;
@@ -76,15 +81,26 @@ export default function ExpiredAccountsPage() {
   async function handleSendReminder() {
     setReminderLoading(true);
     try {
-      const { error } = await supabase.from("announcements").insert({
-        title: "تذكير بتجديد الاشتراك",
-        content: "انتهت فترة اشتراكك، يرجى تجديد الدفع لمتابعة استقبال الطلبات",
-        target_audience: "Drivers",
-        badge_text: "Warning",
-        is_active: true,
-      });
+      if (drivers.length === 0) {
+        toast({ title: "لا توجد حسابات للتذكير", description: "القائمة الحالية فارغة." });
+        return;
+      }
+
+      // Send one targeted announcement per account currently shown in this
+      // section. Never use the generic "Drivers" audience here.
+      const { error } = await supabase.from("announcements").insert(
+        drivers.map((driver) => ({
+          title: "تذكير بتجديد الاشتراك",
+          content: driver.subscription_expires_at && expirationInfo(driver.subscription_expires_at).expired
+            ? "انتهت فترة اشتراكك، يرجى تجديد الدفع لمتابعة استقبال الطلبات"
+            : "ينتهي اشتراكك خلال أقل من أسبوع، يرجى التجديد لتجنب توقف استقبال الطلبات",
+          target_audience: driver.id,
+          badge_text: "Warning",
+          is_active: true,
+        })),
+      );
       if (error) throw error;
-       toast({ title: "تم إرسال التذكير ✓", description: "تم إرسال تذكير التجديد إلى جميع السائقين." });
+       toast({ title: "تم إرسال التذكير ✓", description: `تم إرسال التذكير إلى ${drivers.length} حساب داخل القسم.` });
     } catch (err: any) {
        toast({ title: "فشل الإرسال", description: err.message, variant: "destructive" });
     } finally {
@@ -98,7 +114,7 @@ export default function ExpiredAccountsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">الحسابات المنتهية</h1>
           <p className="text-muted-foreground mt-2">
-             السائقون الموافق عليهم الذين انتهى اشتراكهم — {loading ? "…" : drivers.length} حساب.
+              الحسابات المنتهية أو التي ينتهي اشتراكها خلال أسبوع — {loading ? "…" : drivers.length} حساب.
           </p>
         </div>
         {!loading && drivers.length > 0 && (
@@ -109,7 +125,7 @@ export default function ExpiredAccountsPage() {
             disabled={reminderLoading}
           >
             <Bell className="w-4 h-4" />
-            إرسال تذكير للجميع
+             إرسال تذكير للحسابات داخل القسم
           </Button>
         )}
       </div>
@@ -130,12 +146,14 @@ export default function ExpiredAccountsPage() {
          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground bg-card border rounded-lg border-dashed">
           <CalendarX className="w-12 h-12 mb-4 opacity-30" />
            <h3 className="text-xl font-medium text-foreground">لا توجد حسابات منتهية</h3>
-           <p>جميع السائقين الموافق عليهم لديهم اشتراكات فعّالة.</p>
+            <p>لا توجد حسابات منتهية أو اشتراكات ستنتهي خلال الأسبوع القادم.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
           {drivers.map((driver) => {
-            const expiredDays = driver.subscription_expires_at ? daysAgo(driver.subscription_expires_at) : null;
+             const expiration = driver.subscription_expires_at
+               ? expirationInfo(driver.subscription_expires_at)
+               : null;
             const expiredDate = driver.subscription_expires_at
                ? new Date(driver.subscription_expires_at).toLocaleDateString("ar-DZ")
               : "—";
@@ -147,9 +165,13 @@ export default function ExpiredAccountsPage() {
                     <span className="font-semibold truncate">{driver.name || "—"}</span>
                     <Badge
                       variant="outline"
-                      className="text-xs shrink-0 bg-orange-500/10 text-orange-400 border-orange-500/20"
+                       className={`text-xs shrink-0 ${
+                         expiration?.expired
+                           ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                           : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                       }`}
                     >
-                      منتهي
+                       {expiration?.expired ? "منتهي" : "ينتهي قريباً"}
                     </Badge>
                   </CardTitle>
                   <div className="space-y-1.5 text-xs text-muted-foreground">
@@ -168,15 +190,17 @@ export default function ExpiredAccountsPage() {
                   <div className="flex items-center gap-2 p-3 rounded-md bg-orange-500/5 border border-orange-500/15">
                     <CalendarX className="w-4 h-4 text-orange-400 shrink-0" />
                     <div>
-                      <p className="text-xs font-semibold text-orange-400">
-                        {expiredDays !== null && expiredDays >= 0
-                          ? expiredDays === 0
-                            ? "منتهي اليوم"
-                            : `منتهي منذ ${expiredDays} ${expiredDays === 1 ? "يوم" : "أيام"}`
-                          : "منتهي"}
+                       <p className={`text-xs font-semibold ${expiration?.expired ? "text-orange-400" : "text-amber-400"}`}>
+                         {expiration?.expired
+                           ? expiration.days === 0
+                             ? "منتهي اليوم"
+                             : `منتهي منذ ${expiration.days} ${expiration.days === 1 ? "يوم" : "أيام"}`
+                           : expiration?.days === 1
+                             ? "ينتهي خلال يوم"
+                             : `ينتهي خلال ${expiration?.days ?? "أقل من أسبوع"} أيام`}
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> انتهى في {expiredDate}
+                         <Clock className="w-3 h-3" /> {expiration?.expired ? "انتهى في" : "ينتهي في"} {expiredDate}
                       </p>
                     </div>
                   </div>
