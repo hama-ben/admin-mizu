@@ -20,6 +20,7 @@ import {
   PackageX,
   Award,
   FileText,
+  BookOpen,
   ChevronRight,
   ChevronLeft,
   X,
@@ -54,6 +55,7 @@ const NAV_ITEMS = [
   { href: "/incentives", label: "عجلة الحظ والقسائم",           icon: TicketPercent  },
   { href: "/expired-orders", label: "الطلبات المنتهية",          icon: PackageX       },
   { href: "/motivation", label: "نظرة التحفيز",                  icon: Award          },
+  { href: "/debts", label: "دفتر الديون",                          icon: BookOpen      },
 ] as const;
 
 function SidebarContent({ collapsed }: { collapsed: boolean }) {

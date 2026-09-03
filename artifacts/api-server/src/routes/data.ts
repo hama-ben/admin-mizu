@@ -1182,6 +1182,261 @@ router.get("/ratings-summary", async (_req, res) => {
   }
 });
 
+// GET /api/data/debt-book
+// Read-only debt ledger report. The debt tables are owned by the Mizu app;
+// this admin route only reads them and joins the related users/orders.
+router.get("/debt-book", async (req, res) => {
+  try {
+    const {
+      wilaya,
+      commune,
+      driverName,
+      phone,
+      status,
+      balance: balanceFilter,
+      ceiling: ceilingFilter,
+      dateFrom,
+      dateTo,
+      sort = "newest",
+    } = req.query as Record<string, string | undefined>;
+
+    const values: unknown[] = [];
+    const conditions = ["driver.user_type = 'سائق'"];
+    const addValue = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    if (wilaya) conditions.push(`driver.wilaya = ${addValue(wilaya)}`);
+    if (commune) conditions.push(`driver.commune ILIKE ${addValue(`%${commune}%`)}`);
+    if (driverName) conditions.push(`driver.name ILIKE ${addValue(`%${driverName}%`)}`);
+    if (phone) conditions.push(`driver.phone ILIKE ${addValue(`%${phone}%`)}`);
+    if (status && status !== "all") conditions.push(`da.status = ${addValue(status)}`);
+    if (balanceFilter === "positive") conditions.push("da.balance > 0");
+    if (balanceFilter === "zero") conditions.push("da.balance = 0");
+    if (ceilingFilter === "near") conditions.push("da.debt_ceiling > 0 AND da.balance >= da.debt_ceiling * 0.8");
+    if (ceilingFilter === "exceeded") conditions.push("da.debt_ceiling > 0 AND da.balance > da.debt_ceiling");
+    if (dateFrom) conditions.push(`da.created_at >= ${addValue(dateFrom)}`);
+    if (dateTo) conditions.push(`da.created_at < (${addValue(dateTo)}::date + INTERVAL '1 day')`);
+
+    const orderBy: Record<string, string> = {
+      newest: "da.updated_at DESC",
+      amount: "da.balance DESC",
+      purchases: "purchase_total DESC",
+      oldest: "da.created_at ASC",
+    };
+    const { rows } = await getSupabasePool().query<{
+      account_id: string;
+      driver_id: string;
+      driver_name: string | null;
+      driver_phone: string | null;
+      driver_wilaya: string | null;
+      driver_commune: string | null;
+      consumer_id: string;
+      consumer_name: string | null;
+      consumer_phone: string | null;
+      consumer_email: string | null;
+      debt_ceiling: number | string;
+      balance: number | string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+      entry_count: number | string;
+      purchase_total: number | string;
+    }>(
+      `SELECT
+         da.id AS account_id,
+         da.driver_id,
+         driver.name AS driver_name,
+         driver.phone AS driver_phone,
+         driver.wilaya AS driver_wilaya,
+         driver.commune AS driver_commune,
+         da.consumer_id,
+         consumer.name AS consumer_name,
+         consumer.phone AS consumer_phone,
+         consumer.email AS consumer_email,
+         da.debt_ceiling,
+         da.balance,
+         da.status,
+         da.created_at,
+         da.updated_at,
+         COUNT(de.id)::int AS entry_count,
+         COALESCE(SUM(de.amount), 0) AS purchase_total
+       FROM public.debt_accounts da
+       JOIN public.users driver ON driver.id = da.driver_id
+       JOIN public.users consumer ON consumer.id = da.consumer_id
+       LEFT JOIN public.debt_entries de ON de.account_id = da.id
+       WHERE ${conditions.join(" AND ")}
+       GROUP BY
+         da.id, da.driver_id, driver.name, driver.phone, driver.wilaya,
+         driver.commune, da.consumer_id, consumer.name, consumer.phone,
+         consumer.email, da.debt_ceiling, da.balance, da.status,
+         da.created_at, da.updated_at
+       ORDER BY ${orderBy[sort] ?? orderBy.newest}`,
+      values,
+    );
+
+    const data = rows.map((row) => ({
+      accountId: row.account_id,
+      driver: {
+        id: row.driver_id,
+        name: row.driver_name,
+        phone: row.driver_phone,
+        wilaya: row.driver_wilaya,
+        commune: row.driver_commune,
+      },
+      consumer: {
+        id: row.consumer_id,
+        name: row.consumer_name,
+        phone: row.consumer_phone,
+        email: row.consumer_email,
+      },
+      debtCeiling: Number(row.debt_ceiling),
+      balance: Number(row.balance),
+      status: row.status,
+      entryCount: Number(row.entry_count),
+      purchaseTotal: Number(row.purchase_total),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    const consumerIdsWithBalance = new Set(
+      data.filter((account) => account.balance > 0).map((account) => account.consumer.id),
+    );
+    res.json({
+      data,
+      stats: {
+        totalAccounts: data.length,
+        consumersWithDebt: consumerIdsWithBalance.size,
+        totalDebt: data.reduce((sum, account) => sum + account.balance, 0),
+        totalPurchases: data.reduce((sum, account) => sum + account.purchaseTotal, 0),
+        totalEntries: data.reduce((sum, account) => sum + account.entryCount, 0),
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/data/debt-book/:accountId
+// Read-only detail view for one driver/consumer debt account.
+router.get("/debt-book/:accountId", async (req, res) => {
+  try {
+    const accountResult = await getSupabasePool().query<{
+      account_id: string;
+      driver_id: string;
+      driver_name: string | null;
+      driver_phone: string | null;
+      driver_wilaya: string | null;
+      driver_commune: string | null;
+      consumer_id: string;
+      consumer_name: string | null;
+      consumer_phone: string | null;
+      consumer_email: string | null;
+      debt_ceiling: number | string;
+      balance: number | string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT
+         da.id AS account_id,
+         da.driver_id,
+         driver.name AS driver_name,
+         driver.phone AS driver_phone,
+         driver.wilaya AS driver_wilaya,
+         driver.commune AS driver_commune,
+         da.consumer_id,
+         consumer.name AS consumer_name,
+         consumer.phone AS consumer_phone,
+         consumer.email AS consumer_email,
+         da.debt_ceiling,
+         da.balance,
+         da.status,
+         da.created_at,
+         da.updated_at
+       FROM public.debt_accounts da
+       JOIN public.users driver ON driver.id = da.driver_id
+       JOIN public.users consumer ON consumer.id = da.consumer_id
+       WHERE da.id = $1`,
+      [req.params.accountId],
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      res.status(404).json({ error: "Debt account not found" });
+      return;
+    }
+
+    const entriesResult = await getSupabasePool().query<{
+      id: string;
+      order_id: string;
+      amount: number | string;
+      created_at: string;
+      payment_method: string | null;
+      water_volume: string | null;
+      barrel_count: number | null;
+      order_status: string | null;
+      order_created_at: string | null;
+      delivered_at: string | null;
+    }>(
+      `SELECT
+         de.id,
+         de.order_id,
+         de.amount,
+         de.created_at,
+         o.payment_method,
+         o.water_volume,
+         o.barrel_count,
+         o.status AS order_status,
+         o.created_at AS order_created_at,
+         o.delivered_at
+       FROM public.debt_entries de
+       LEFT JOIN public.orders o ON o.id = de.order_id
+       WHERE de.account_id = $1
+       ORDER BY de.created_at DESC, de.id DESC`,
+      [req.params.accountId],
+    );
+
+    res.json({
+      account: {
+        accountId: account.account_id,
+        driver: {
+          id: account.driver_id,
+          name: account.driver_name,
+          phone: account.driver_phone,
+          wilaya: account.driver_wilaya,
+          commune: account.driver_commune,
+        },
+        consumer: {
+          id: account.consumer_id,
+          name: account.consumer_name,
+          phone: account.consumer_phone,
+          email: account.consumer_email,
+        },
+        debtCeiling: Number(account.debt_ceiling),
+        balance: Number(account.balance),
+        status: account.status,
+        createdAt: account.created_at,
+        updatedAt: account.updated_at,
+      },
+      entries: entriesResult.rows.map((entry) => ({
+        id: entry.id,
+        orderId: entry.order_id,
+        amount: Number(entry.amount),
+        createdAt: entry.created_at,
+        paymentMethod: entry.payment_method,
+        waterVolume: entry.water_volume,
+        barrelCount: entry.barrel_count,
+        orderStatus: entry.order_status,
+        orderCreatedAt: entry.order_created_at,
+        deliveredAt: entry.delivered_at,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/data/disputes/history
 // History is read from the existing audit log. No additional dispute table or
 // column is required: resolving a dispute already records the admin decision.
