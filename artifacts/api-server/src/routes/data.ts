@@ -1055,6 +1055,133 @@ router.get("/disputes", async (_req, res) => {
   }
 });
 
+// GET /api/data/ratings-summary
+// Returns live driver rating totals and the consumers behind each rating.
+// The imported app has used more than one name for the rating author's id
+// over time, so resolve the actual column from the database metadata instead
+// of hard-coding a column that may not exist in an older schema.
+router.get("/ratings-summary", async (_req, res) => {
+  try {
+    const pool = getSupabasePool();
+    const { rows: columnRows } = await pool.query<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'ratings'`,
+    );
+    const columns = new Set(columnRows.map((row) => row.column_name));
+    const raterColumn = [
+      "rater_user_id",
+      "consumer_id",
+      "user_id",
+      "reviewer_id",
+      "rater_id",
+      "rated_by_user_id",
+    ].find((column) => columns.has(column));
+
+    if (!raterColumn) {
+      throw new Error("The ratings table does not expose the consumer who submitted each rating");
+    }
+
+    const raterTypeFilter = columns.has("rater_type")
+      ? "AND r.rater_type = 'consumer'"
+      : "";
+    const { rows } = await pool.query<{
+      driver_id: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      driver_wilaya: string | null;
+      consumer_id: string | null;
+      consumer_name: string | null;
+      consumer_phone: string | null;
+      consumer_email: string | null;
+      rating: number | string | null;
+      comment: string | null;
+      dispute_reason: string | null;
+      created_at: string;
+    }>(
+      `SELECT
+         r.rated_user_id::text AS driver_id,
+         driver.name AS driver_name,
+         driver.phone AS driver_phone,
+         driver.wilaya AS driver_wilaya,
+         consumer.id::text AS consumer_id,
+         consumer.name AS consumer_name,
+         consumer.phone AS consumer_phone,
+         consumer.email AS consumer_email,
+         r.stars AS rating,
+         r.comment,
+         r.dispute_reason,
+         r.created_at
+       FROM public.users driver
+       LEFT JOIN public.ratings r
+         ON r.rated_user_id = driver.id
+         ${raterTypeFilter}
+       LEFT JOIN public.users consumer ON consumer.id = r."${raterColumn}"::text
+       WHERE driver.user_type = 'سائق'
+       ORDER BY driver.name NULLS LAST, r.created_at DESC NULLS LAST`,
+    );
+
+    const summaries = new Map<string, {
+      driverId: string;
+      driverName: string | null;
+      driverPhone: string | null;
+      wilaya: string | null;
+      totalRatings: number;
+      averageRating: number;
+      ratings: Array<{
+        id: string;
+        consumerId: string | null;
+        consumerName: string | null;
+        consumerPhone: string | null;
+        consumerEmail: string | null;
+        rating: number;
+        comment: string | null;
+        createdAt: string;
+      }>;
+    }>();
+
+    for (const row of rows) {
+      if (!row.driver_id) continue;
+      let summary = summaries.get(row.driver_id);
+      if (!summary) {
+        summary = {
+          driverId: row.driver_id,
+          driverName: row.driver_name,
+          driverPhone: row.driver_phone,
+          wilaya: row.driver_wilaya,
+          totalRatings: 0,
+          averageRating: 0,
+          ratings: [],
+        };
+        summaries.set(row.driver_id, summary);
+      }
+      if (row.rating === null || row.rating === undefined) continue;
+      const rating = Number(row.rating);
+      summary.totalRatings += 1;
+      summary.averageRating += rating;
+      summary.ratings.push({
+        id: `${row.driver_id}-${summary.ratings.length}`,
+        consumerId: row.consumer_id,
+        consumerName: row.consumer_name,
+        consumerPhone: row.consumer_phone,
+        consumerEmail: row.consumer_email,
+        rating,
+        comment: row.dispute_reason ?? row.comment ?? null,
+        createdAt: row.created_at,
+      });
+    }
+
+    res.json([...summaries.values()].map((summary) => ({
+      ...summary,
+      averageRating: summary.totalRatings
+        ? Number((summary.averageRating / summary.totalRatings).toFixed(2))
+        : 0,
+    })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/data/disputes/history
 // History is read from the existing audit log. No additional dispute table or
 // column is required: resolving a dispute already records the admin decision.

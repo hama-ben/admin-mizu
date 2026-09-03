@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, Search, Eye, Star } from "lucide-react";
+import { AlertTriangle, Search, Eye, Star, Users, UserRound, Phone, Mail, MapPin, ArrowRight } from "lucide-react";
 
 const STATUS_LABELS: Record<DisputeStatus, string> = {
   pending: "معلق",
@@ -35,6 +35,27 @@ interface DisputeHistoryEntry {
   status: "resolved" | "dismissed";
   adminEmail: string | null;
   resolvedAt: string;
+}
+
+interface ConsumerRating {
+  id: string;
+  consumerId: string | null;
+  consumerName: string | null;
+  consumerPhone: string | null;
+  consumerEmail: string | null;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+}
+
+interface DriverRatingSummary {
+  driverId: string;
+  driverName: string | null;
+  driverPhone: string | null;
+  wilaya: string | null;
+  totalRatings: number;
+  averageRating: number;
+  ratings: ConsumerRating[];
 }
 
 function StarRating({ rating }: { rating: number }) {
@@ -75,20 +96,24 @@ function mapRow(row: Record<string, any>): RatingDispute {
 export default function DisputesPage() {
   const [disputes, setDisputes] = useState<RatingDispute[]>([]);
   const [history, setHistory] = useState<DisputeHistoryEntry[]>([]);
+  const [ratingSummaries, setRatingSummaries] = useState<DriverRatingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
-  const [view, setView] = useState<"pending" | "history">("pending");
+  const [ratingsLoading, setRatingsLoading] = useState(true);
+  const [view, setView] = useState<"pending" | "history" | "ratings">("pending");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selected, setSelected] = useState<RatingDispute | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<DriverRatingSummary | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     fetchDisputes();
     fetchHistory();
+    fetchRatingSummaries();
   }, []);
   useAutoRefresh(async () => {
-    await Promise.all([fetchDisputes(true), fetchHistory(true)]);
+    await Promise.all([fetchDisputes(true), fetchHistory(true), fetchRatingSummaries(true)]);
   }, 10000);
 
   async function fetchDisputes(background = false) {
@@ -116,6 +141,20 @@ export default function DisputesPage() {
       }
     } finally {
       if (!background) setHistoryLoading(false);
+    }
+  }
+
+  async function fetchRatingSummaries(background = false) {
+    if (!background) setRatingsLoading(true);
+    try {
+      const data = await api.get<DriverRatingSummary[]>("/ratings-summary");
+      setRatingSummaries(data ?? []);
+    } catch (err: any) {
+      if (!background) {
+        toast({ title: "تعذر جلب قائمة التقييمات", description: err.message, variant: "destructive" });
+      }
+    } finally {
+      if (!background) setRatingsLoading(false);
     }
   }
 
@@ -154,6 +193,16 @@ export default function DisputesPage() {
       || entry.wilaya?.toLowerCase().includes(query)
       || entry.adminEmail?.toLowerCase().includes(query);
   }), [history, search]);
+  const filteredRatingSummaries = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return ratingSummaries;
+    return ratingSummaries.filter((summary) =>
+      summary.driverName?.toLowerCase().includes(query)
+      || summary.driverId.toLowerCase().includes(query)
+      || summary.driverPhone?.toLowerCase().includes(query)
+      || summary.wilaya?.toLowerCase().includes(query),
+    );
+  }, [ratingSummaries, search]);
 
   return (
     <div className="p-8 space-y-6 animate-in fade-in duration-500">
@@ -177,6 +226,10 @@ export default function DisputesPage() {
         <Button variant={view === "history" ? "default" : "outline"} onClick={() => setView("history")}>
           سجل المعالجة
           <Badge variant="secondary" className="mr-2">{history.length}</Badge>
+        </Button>
+        <Button variant={view === "ratings" ? "default" : "outline"} onClick={() => setView("ratings")}>
+          قائمة التقييمات
+          <Badge variant="secondary" className="mr-2">{ratingSummaries.length}</Badge>
         </Button>
       </div>
 
@@ -262,7 +315,7 @@ export default function DisputesPage() {
             </Table>
           </div>
         </>
-      ) : (
+      ) : view === "history" ? (
         <>
           <div className="flex flex-wrap items-center gap-3 bg-card p-4 rounded-lg border border-border">
             <div className="relative flex-1 min-w-[200px]">
@@ -320,6 +373,80 @@ export default function DisputesPage() {
             </Table>
           </div>
         </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3 bg-card p-4 rounded-lg border border-border">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="بحث باسم السائق أو الهاتف أو الولاية..."
+                className="pr-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <span className="text-sm text-muted-foreground ml-auto">{filteredRatingSummaries.length} سائق</span>
+          </div>
+
+          <div className="border rounded-md overflow-hidden bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead>السائق</TableHead>
+                  <TableHead>الهاتف</TableHead>
+                  <TableHead>الولاية</TableHead>
+                  <TableHead>متوسط التقييم</TableHead>
+                  <TableHead>إجمالي التقييمات</TableHead>
+                  <TableHead className="text-right">التفاصيل</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ratingsLoading ? (
+                  Array(6).fill(0).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array(6).fill(0).map((__, j) => <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>)}
+                    </TableRow>
+                  ))
+                ) : filteredRatingSummaries.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
+                      <Star className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      <p className="font-medium text-foreground">لا توجد تقييمات للسائقين</p>
+                      <p className="text-sm mt-1">ستظهر هنا التقييمات التي يرسلها المستهلكون.</p>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredRatingSummaries.map((summary) => (
+                    <TableRow key={summary.driverId} className="group">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+                            <UserRound className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{summary.driverName || "سائق بدون اسم"}</p>
+                            <p className="font-mono text-[11px] text-muted-foreground">{summary.driverId.slice(0, 12)}…</p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground" dir="ltr">{summary.driverPhone || "—"}</TableCell>
+                      <TableCell className="text-sm">{summary.wilaya || "—"}</TableCell>
+                      <TableCell><StarRating rating={summary.averageRating} /></TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{summary.totalRatings} تقييم</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setSelectedDriver(summary)}>
+                          عرض المستهلكين <ArrowRight className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
@@ -352,6 +479,71 @@ export default function DisputesPage() {
                     <SelectItem value="dismissed">مغلق</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedDriver} onOpenChange={(open) => !open && setSelectedDriver(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              المستهلكون الذين قيّموا السائق
+            </DialogTitle>
+          </DialogHeader>
+          {selectedDriver && (
+            <div className="space-y-5 pt-2">
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-lg font-semibold">{selectedDriver.driverName || "سائق بدون اسم"}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      {selectedDriver.driverPhone && <span className="flex items-center gap-1" dir="ltr"><Phone className="h-3.5 w-3.5" />{selectedDriver.driverPhone}</span>}
+                      {selectedDriver.wilaya && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{selectedDriver.wilaya}</span>}
+                    </div>
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs text-muted-foreground mb-1">المتوسط الإجمالي</p>
+                    <StarRating rating={selectedDriver.averageRating} />
+                    <p className="mt-1 text-xs text-muted-foreground">{selectedDriver.totalRatings} تقييم من المستهلكين</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-h-[420px] overflow-y-auto rounded-lg border">
+                {selectedDriver.ratings.length === 0 ? (
+                  <div className="py-12 text-center text-sm text-muted-foreground">لا توجد تفاصيل للتقييمات.</div>
+                ) : (
+                  <div className="divide-y">
+                    {selectedDriver.ratings.map((rating) => (
+                      <div key={rating.id} className="p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                              <UserRound className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="font-medium">{rating.consumerName || "مستهلك بدون اسم"}</p>
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                {rating.consumerPhone && <span className="flex items-center gap-1" dir="ltr"><Phone className="h-3 w-3" />{rating.consumerPhone}</span>}
+                                {rating.consumerEmail && <span className="flex items-center gap-1" dir="ltr"><Mail className="h-3 w-3" />{rating.consumerEmail}</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-left">
+                            <StarRating rating={rating.rating} />
+                            <p className="mt-1 text-[11px] text-muted-foreground">{formatDate(rating.createdAt)}</p>
+                          </div>
+                        </div>
+                        {rating.comment && (
+                          <p className="mt-3 rounded-md bg-muted/40 p-3 text-sm leading-relaxed">{rating.comment}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
